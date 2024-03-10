@@ -9,6 +9,7 @@ from graphviz import Digraph
 # * avoid users having to subclass at any cost
 # * ids are optional and only there for debugging, they don't have semantics
 
+# TODO make ids not optional
 
 @dataclass(eq=False, frozen=True)
 class Memory:
@@ -95,6 +96,7 @@ class Hardware:
                 ("id", chan.id),
                 ("latency", str(chan.latency)),
                 ("time_per_bit", str(chan.time_per_bit)),
+                ("bandwidth", str(1/chan.time_per_bit)),
                 ("energy_per_bit", str(chan.energy_per_bit))
             ]
             label = dot_html(dot_table("Channel", rows))
@@ -179,6 +181,7 @@ class OperationGraph:
 
 @dataclass(frozen=True)
 class OperationAllocation:
+    id: Optional[str]
     core: Core
     input_memories: Tuple[Memory]
     output_memory: Memory

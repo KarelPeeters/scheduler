@@ -3,7 +3,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple, Union, DefaultDict
 
-from core.frontier import ParetoFrontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core, OperationAllocation
 
 
@@ -22,6 +21,37 @@ from core.problem import Problem, OperationNode, Memory, Channel, Core, Operatio
 
 # TODO make the pareto-front transposition aware (between hardware and graph symmetries)
 
+class SimpleFrontier:
+    def __init__(self):
+        self.min_time = math.inf
+        self.min_time_actions = None
+
+        self.min_energy = math.inf
+        self.min_energy_actions = None
+
+    def add_solution(self, time: float, energy: float, actions: List):
+        either = False
+
+        if time < self.min_time:
+            either = True
+            self.min_time = time
+            self.min_time_actions = actions
+            print(f"New best time solution: ({time}, {energy})")
+
+        if energy < self.min_energy:
+            either = True
+            self.min_energy = energy
+            self.min_energy_actions = actions
+            print(f"New best energy solution: ({time}, {energy})")
+
+        if either:
+            for action in actions:
+                print(f"  {action}")
+
+    def is_dominated(self, time: float, energy: float):
+        return time >= self.min_time and energy >= self.min_energy
+
+
 def schedule(problem: Problem):
     # The pareto key consists of:
     # * scheduling progress: [done] per real node (higher is better)
@@ -30,8 +60,10 @@ def schedule(problem: Problem):
     # TODO include "value in memory" availability as value
     # TODO add a more complicated "dominated proper", eg. we can obvious trade memory availability for time+energy
 
-    real_nodes = [n for n in problem.graph.nodes if n not in problem.graph.inputs]
-    frontier = ParetoFrontier(len(real_nodes) + len(problem.hardware.cores) + len(problem.hardware.channels) + 2)
+    # real_nodes = [n for n in problem.graph.nodes if n not in problem.graph.inputs]
+    # frontier = ParetoFrontier(len(real_nodes) + len(problem.hardware.cores) + len(problem.hardware.channels) + 2)
+
+    frontier = SimpleFrontier()
 
     state = RecurseState.initial(problem)
     recurse(problem, frontier, state)
@@ -66,6 +98,9 @@ class ActionCore:
     node: OperationNode
     alloc: OperationAllocation
 
+    def __str__(self):
+        return f"ActionCore(node={self.node.id}, alloc={self.alloc.id}, core={self.alloc.core.id})"
+
 
 @dataclass(frozen=True, eq=False)
 class ActionChannel:
@@ -73,6 +108,9 @@ class ActionChannel:
     source: Memory
     dest: Memory
     value: OperationNode
+
+    def __str__(self):
+        return f"ActionChannel(channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
 
 
 Action = Union[ActionWait, ActionCore, ActionChannel]
@@ -109,6 +147,8 @@ class RecurseState:
     memory_contents: Dict[Memory, Dict[OperationNode, bool]]  # mem -> value -> ready
     active_reads: DefaultDict[Tuple[OperationNode, Memory], int]
 
+    actions_taken: List[Action]
+
     @staticmethod
     def initial(problem: Problem):
         # basics
@@ -141,6 +181,7 @@ class RecurseState:
             channel_state={c: None for c in hw.channels},
             memory_contents=memory_contents,
             active_reads=defaultdict(lambda: 0),
+            actions_taken=[],
         )
 
     def clone(self):
@@ -156,6 +197,8 @@ class RecurseState:
             channel_state=self.channel_state.copy(),
             memory_contents={m: c.copy() for m, c in self.memory_contents.items()},
             active_reads=self.active_reads.copy(),
+
+            actions_taken=self.actions_taken.copy(),
         )
 
     def print(self, problem: Problem):
@@ -188,6 +231,14 @@ class RecurseState:
         print(f"  }}")
         print(")")
 
+    def is_done(self, problem: Problem):
+        for node, mem in problem.placement_outputs.items():
+            if node not in self.memory_contents[mem] or self.memory_contents[mem][node] is not True:
+                return False
+
+        assert all(s is None for s in self.core_state.values())
+        return True
+
     def mem_space_used(self, dest):
         return sum(v.size_bits for v in self.memory_contents[dest])
 
@@ -197,7 +248,7 @@ class RecurseState:
         return next_state
 
     def do_action(self, action: Action):
-        print(f"Running action: {action}")
+        # print(f"Running action: {action}")
 
         if isinstance(action, ActionWait):
             self.do_wait_action(action)
@@ -207,6 +258,8 @@ class RecurseState:
             self.do_channel_action(action)
         else:
             assert False, f"unknown action type: {action}"
+
+        self.actions_taken.append(action)
 
     def do_wait_action(self, action: ActionWait):
         assert action.time_until > self.curr_time
@@ -288,7 +341,7 @@ class RecurseState:
 # TODO optimization: only consider taking actions after waiting that were possible because of the waiting after this?
 #   or will pareto handle that for us?
 
-def recurse(problem: Problem, frontier: ParetoFrontier, state: RecurseState):
+def recurse(problem: Problem, frontier: SimpleFrontier, state: RecurseState):
     # Always:
     # * check if the problem is done, report result
     # * drop all values that will never be used again from memories
@@ -301,11 +354,18 @@ def recurse(problem: Problem, frontier: ParetoFrontier, state: RecurseState):
     #   * wait for any of the currently running channels to become idle, then start it on that one
     # * drop a value
 
-    state.print(problem)
+    # state.print(problem)
     # print("Current time/energy:", state.curr_time, state.curr_energy)
 
     hardware = problem.hardware
     graph = problem.graph
+
+    if frontier.is_dominated(state.curr_time, state.curr_energy):
+        return
+
+    if state.is_done(problem):
+        # TODO cancel all still-running channel transfers and subtract their energy again?
+        frontier.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
 
     # TODO check problem done, report back
     # TODO drop fully dead values
@@ -359,7 +419,7 @@ def recurse(problem: Problem, frontier: ParetoFrontier, state: RecurseState):
 
 
 def recurse_channel_actions(
-        problem: Problem, frontier: ParetoFrontier, state: RecurseState,
+        problem: Problem, frontier: SimpleFrontier, state: RecurseState,
         channel: Channel, source: Memory, dest: Memory
 ):
     assert state.channel_state[channel] is None

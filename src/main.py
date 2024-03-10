@@ -48,7 +48,7 @@ def main():
         if node in inputs:
             continue
         allocations[node] = {
-            OperationAllocation(core, (core.connected_memories[0],), core.connected_memories[0], 100, 100)
+            OperationAllocation("basic", core, (core.connected_memories[0],), core.connected_memories[0], 100, 100)
             for core in cores
         }
     placement_inputs = {n: offchip_memory for n in inputs}
