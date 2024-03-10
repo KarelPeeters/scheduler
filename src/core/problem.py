@@ -9,13 +9,25 @@ from graphviz import Digraph
 # * ids are optional and only there for debugging, they don't have semantics
 
 
-@dataclass
+def constructor(cls):
+    return dataclass(
+        init=True,
+        eq=False,
+        order=False,
+        unsafe_hash=False,
+        frozen=True,
+        match_args=False,
+        kw_only=False
+    )(cls)
+
+
+@constructor
 class Memory:
     id: Optional[str]
-    size: Optional[int]
+    size_bits: Optional[int]
 
 
-@dataclass
+@constructor
 class Channel:
     id: Optional[str]
 
@@ -29,7 +41,7 @@ class Channel:
     energy_per_bit: float
 
 
-@dataclass
+@constructor
 class Core:
     id: Optional[str]
     connected_memories: List[Memory]
@@ -47,7 +59,7 @@ def dot_html(content: str) -> str:
     return f"<{content}>"
 
 
-@dataclass
+@constructor
 class Hardware:
     id: Optional[str]
     cores: List[Core]
@@ -69,8 +81,8 @@ class Hardware:
             dot.attr(labelloc="t")
 
         for i, mem in enumerate(self.memories):
-            size = "inf" if mem.size is None else str(mem.size)
-            label = dot_html(dot_table("Memory", [("id", mem.id), ("size", size)]))
+            size = "inf" if mem.size_bits is None else str(mem.size_bits)
+            label = dot_html(dot_table("Memory", [("id", mem.id), ("size_bits", size)]))
             dot.node(f"mem-{i}", label, shape="box",
                      color="blue")
 
@@ -109,7 +121,7 @@ class Hardware:
 #   but only specific memory transfers
 # TODO dedicated input node
 # TODO change to a mutable graph representation that can also deal with accumulation
-@dataclass
+@constructor
 class OperationNode:
     id: Optional[str]
     size_bits: int
@@ -117,15 +129,57 @@ class OperationNode:
     inputs: List['OperationNode']
 
 
-@dataclass
+# TODO split operations and values to support multiple outputs, ...
+@constructor
 class OperationGraph:
     id: Optional[str]
-    # inputs are nodes with no
     nodes: List[OperationNode]
+
+    inputs: List[OperationNode]
     outputs: List[OperationNode]
 
+    def assert_valid(self):
+        for node in self.nodes:
+            for input in node.inputs:
+                assert input in self.nodes
+        assert len(set(self.inputs)) == len(self.inputs)
+        assert len(set(self.outputs)) == len(self.outputs)
+        for input in self.inputs:
+            assert input in self.nodes
+        for output in self.outputs:
+            assert output in self.nodes
 
-@dataclass
+    def to_graphviz(self):
+        dot = Digraph()
+
+        if self.id is not None:
+            dot.attr(label=f"<<B>{self.id}</B>>")
+            dot.attr(labelloc="t")
+
+        for i, node in enumerate(self.nodes):
+            rows = [
+                ("id", node.id),
+                ("size_bits", str(node.size_bits)),
+            ]
+
+            input = [i for i, n in enumerate(self.inputs) if n == node]
+            output = [i for i, n in enumerate(self.outputs) if n == node]
+            if input:
+                rows.append(("input", str(input)))
+            if output:
+                rows.append(("output", str(output)))
+
+            label = dot_html(dot_table("Node", rows))
+            dot.node(f"node-{i}", label, shape="box", color="blue")
+            for j, input in enumerate(node.inputs):
+                head = f"node-{self.nodes.index(input)}"
+                tail = f"node-{i}"
+                dot.edge(head, tail, headlabel=str(j))
+
+        return dot
+
+
+@constructor
 class OperationAllocation:
     core: Core
 
@@ -136,7 +190,7 @@ class OperationAllocation:
     energy: float
 
 
-@dataclass
+@constructor
 class Problem:
     id: Optional[str]
     hardware: Hardware
