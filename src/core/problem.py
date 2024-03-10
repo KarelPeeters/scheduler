@@ -37,6 +37,9 @@ class Channel:
 @dataclass(eq=False, frozen=True)
 class Core:
     id: Optional[str]
+
+    # TODO technically this is redundant, it's only here for error checking
+    #  maybe we should derive this from the allocation options?
     connected_memories: List[Memory]
 
 
@@ -174,13 +177,11 @@ class OperationGraph:
         return dot
 
 
-@dataclass(eq=False, frozen=True)
+@dataclass(frozen=True)
 class OperationAllocation:
     core: Core
-
-    input_memories: List[int]
-    output_memory: int
-
+    input_memories: Tuple[Memory]
+    output_memory: Memory
     time: float
     energy: float
 
@@ -212,8 +213,8 @@ class Problem:
                 assert alloc.core in self.hardware.cores
                 assert len(alloc.input_memories) == len(node.inputs)
                 for mem in alloc.input_memories:
-                    assert mem in range(len(self.hardware.memories))
-                assert alloc.output_memory in range(len(self.hardware.memories))
+                    assert mem in alloc.core.connected_memories
+                assert alloc.output_memory in alloc.core.connected_memories
 
         for node, mem in itertools.chain(self.placement_inputs.items(), self.placement_outputs.items()):
             assert node in self.graph.nodes

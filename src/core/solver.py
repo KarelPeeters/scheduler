@@ -1,10 +1,10 @@
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple, DefaultDict, Union
+from typing import List, Optional, Dict, Tuple, Union, DefaultDict
 
 from core.frontier import ParetoFrontier
-from core.problem import Problem, OperationNode, Memory, Channel, Core
+from core.problem import Problem, OperationNode, Memory, Channel, Core, OperationAllocation
 
 
 # TODO add latency and energy bounds. Some examples:
@@ -57,41 +57,40 @@ class ClaimCounter:
 
 
 @dataclass(frozen=True, eq=False)
-class WaitAction:
+class ActionWait:
     time_until: float
 
 
 @dataclass(frozen=True, eq=False)
-class CoreAction:
-    # TODO
-    pass
+class ActionCore:
+    node: OperationNode
+    alloc: OperationAllocation
 
 
 @dataclass(frozen=True, eq=False)
-class ChannelAction:
+class ActionChannel:
     channel: Channel
     source: Memory
     dest: Memory
     value: OperationNode
 
 
-Action = Union[ChannelAction, CoreAction, WaitAction]
+Action = Union[ActionWait, ActionCore, ActionChannel]
 
 
 @dataclass(frozen=True, eq=False)
 class CoreRunning:
     time_done: float
-    node: OperationNode
-    claims: List[Claim]
+    action: ActionCore
 
     def __str__(self):
-        return f"CoreRunning(time_done={self.time_done}, node={self.node.id}, claims={self.claims})"
+        return f"CoreRunning(time_done={self.time_done}, action={self.action})"
 
 
 @dataclass(frozen=True, eq=False)
 class ChannelRunning:
     time_done: float
-    action: ChannelAction
+    action: ActionChannel
 
     def __str__(self):
         return f"ChannelRunning(time_done={self.time_done}, action={self.action})"
@@ -108,17 +107,13 @@ class RecurseState:
     core_state: Dict[Core, Optional[CoreRunning]]
     channel_state: Dict[Channel, Optional[ChannelRunning]]
     memory_contents: Dict[Memory, Dict[OperationNode, bool]]  # mem -> value -> ready
-    active_claims: DefaultDict[Tuple[OperationNode, Memory], ClaimCounter]
+    active_reads: DefaultDict[Tuple[OperationNode, Memory], int]
 
     @staticmethod
     def initial(problem: Problem):
         # basics
         hw = problem.hardware
         graph = problem.graph
-
-        # current
-        curr_time = 0.0
-        curr_energy = 0.0
 
         # unstarted nodes and values that have remaining uses
         unstarted_nodes = [n for n in graph.nodes if n not in graph.inputs]
@@ -145,15 +140,11 @@ class RecurseState:
             core_state={c: None for c in hw.cores},
             channel_state={c: None for c in hw.channels},
             memory_contents=memory_contents,
-            active_claims=(defaultdict(lambda: ClaimCounter(0, 0))),
+            active_reads=defaultdict(lambda: 0),
         )
 
     def clone(self):
         """ deep clone """
-        active_claims = defaultdict(lambda: ClaimCounter(0, 0))
-        for key, counter in self.active_claims.items():
-            active_claims[key] = counter.clone()
-
         return RecurseState(
             curr_time=self.curr_time,
             curr_energy=self.curr_energy,
@@ -164,7 +155,7 @@ class RecurseState:
             core_state=self.core_state.copy(),
             channel_state=self.channel_state.copy(),
             memory_contents={m: c.copy() for m, c in self.memory_contents.items()},
-            active_claims=active_claims,
+            active_reads=self.active_reads.copy(),
         )
 
     def print(self, problem: Problem):
@@ -192,10 +183,13 @@ class RecurseState:
         print(f"  ]")
 
         print("  active_claims: {")
-        for (node, memory), counter in self.active_claims.items():
+        for (node, memory), counter in self.active_reads.items():
             print(f"    ({node.id}, {memory.id}): {counter}")
         print(f"  }}")
         print(")")
+
+    def mem_space_used(self, dest):
+        return sum(v.size_bits for v in self.memory_contents[dest])
 
     def clone_do_action(self, action: Action):
         next_state = self.clone()
@@ -205,23 +199,32 @@ class RecurseState:
     def do_action(self, action: Action):
         print(f"Running action: {action}")
 
-        if isinstance(action, WaitAction):
+        if isinstance(action, ActionWait):
             self.do_wait_action(action)
-        elif isinstance(action, CoreAction):
+        elif isinstance(action, ActionCore):
             self.do_core_action(action)
-        elif isinstance(action, ChannelAction):
+        elif isinstance(action, ActionChannel):
             self.do_channel_action(action)
         else:
             assert False, f"unknown action type: {action}"
 
-    def do_wait_action(self, action: WaitAction):
+    def do_wait_action(self, action: ActionWait):
         assert action.time_until > self.curr_time
         self.curr_time = action.time_until
 
         for core, state in self.core_state.items():
             if state is None or state.time_done > self.curr_time:
                 continue
-            assert False, "TODO"  # TODO
+
+            node = state.action.node
+            mem_out = state.action.alloc.output_memory
+
+            assert self.memory_contents[mem_out][node] is False
+            self.memory_contents[mem_out][node] = True
+
+            for mem_input in state.action.alloc.input_memories:
+                self.active_reads[(node, mem_input)] -= 1
+                self.core_state[core] = None
 
         for channel, state in self.channel_state.items():
             if state is None or state.time_done > self.curr_time:
@@ -229,23 +232,40 @@ class RecurseState:
 
             assert self.memory_contents[state.action.dest][state.action.value] is False
             self.memory_contents[state.action.dest][state.action.value] = True
-
-            self.active_claims[(state.action.value, state.action.source)].reads -= 1
-            self.active_claims[(state.action.value, state.action.dest)].writes -= 1
-
+            self.active_reads[(state.action.value, state.action.source)] -= 1
             self.channel_state[channel] = None
 
-    def do_core_action(self, action: CoreAction):
-        assert False, "TODO"  # TODO
+    def do_core_action(self, action: ActionCore):
+        node = action.node
+        alloc = action.alloc
+        core = alloc.core
 
-    def do_channel_action(self, action: ChannelAction):
+        self.unstarted_nodes.remove(node)
+
+        # add claims
+        assert node not in self.memory_contents[alloc.output_memory]
+        self.memory_contents[alloc.output_memory][node] = False
+
+        for index_input, mem_input in enumerate(alloc.input_memories):
+            input = node.inputs[index_input]
+            self.active_reads[(input, mem_input)] += 1
+
+        self.curr_energy += alloc.energy
+
+        assert self.core_state[core] is None
+        self.core_state[core] = CoreRunning(
+            time_done=self.curr_time + alloc.time,
+            action=action
+        )
+
+    def do_channel_action(self, action: ActionChannel):
         assert action.value not in self.memory_contents[action.dest]
         self.memory_contents[action.dest][action.value] = False
-
-        self.active_claims[(action.value, action.source)].reads += 1
-        self.active_claims[(action.value, action.dest)].writes += 1
+        self.active_reads[(action.value, action.source)] += 1
 
         time_transfer = action.channel.latency + action.value.size_bits * action.channel.time_per_bit
+        energy_transfer = action.value.size_bits * action.channel.energy_per_bit
+        self.curr_energy += energy_transfer
 
         assert self.channel_state[action.channel] is None
         self.channel_state[action.channel] = ChannelRunning(
@@ -282,11 +302,16 @@ def recurse(problem: Problem, frontier: ParetoFrontier, state: RecurseState):
     # * drop a value
 
     state.print(problem)
+    # print("Current time/energy:", state.curr_time, state.curr_energy)
+
     hardware = problem.hardware
     graph = problem.graph
 
     # TODO check problem done, report back
     # TODO drop fully dead values
+
+    # TODO action: drop value from core
+    #    add a bunch of conditions to this to ensure we don't keep looping
 
     # wait for the next node to finish
     first_done_time = min(
@@ -294,9 +319,33 @@ def recurse(problem: Problem, frontier: ParetoFrontier, state: RecurseState):
         min((r.time_done for r in state.channel_state.values() if r is not None), default=math.inf),
     )
     if first_done_time < math.inf:
-        recurse(problem, frontier, state.clone_do_action(WaitAction(first_done_time)))
+        next_state = state.clone_do_action(ActionWait(first_done_time))
+        recurse(problem, frontier, next_state)
 
-    # TODO start operations
+    # start core operations
+    for node in state.unstarted_nodes:
+        for alloc in problem.possible_allocations[node]:
+            # check if core is free
+            core = alloc.core
+            if state.core_state[core] is not None:
+                continue
+
+            # check if the output memory has space
+            if node.size_bits + state.mem_space_used(alloc.output_memory) > alloc.output_memory.size_bits:
+                continue
+
+            # check if inputs are available in the right memories
+            inputs_available = True
+            for index_input, mem_input in enumerate(alloc.input_memories):
+                input = node.inputs[index_input]
+                if input not in state.memory_contents[mem_input] or not state.memory_contents[mem_input][input]:
+                    inputs_available = False
+                    break
+            if not inputs_available:
+                continue
+
+            next_state = state.clone_do_action(ActionCore(node=node, alloc=alloc))
+            recurse(problem, frontier, next_state)
 
     # start transfers
     for channel in hardware.channels:
@@ -324,11 +373,11 @@ def recurse_channel_actions(
             continue
 
         # check if the value can fit in the target memory
-        target_size_before = sum(v.size_bits for v in state.memory_contents[dest])
-        if value.size_bits + target_size_before > dest.size_bits:
-            continue
+        if dest.size_bits is not None:
+            if value.size_bits + state.mem_space_used(dest) > dest.size_bits:
+                continue
 
         # run action
-        action = ChannelAction(channel, source=source, dest=dest, value=value)
+        action = ActionChannel(channel, source=source, dest=dest, value=value)
         next_state = state.clone_do_action(action)
         recurse(problem, frontier, next_state)
