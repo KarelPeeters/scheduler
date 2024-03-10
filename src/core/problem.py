@@ -1,3 +1,4 @@
+import itertools
 from dataclasses import dataclass
 from typing import List, Dict, Set, Tuple, Optional
 
@@ -9,25 +10,15 @@ from graphviz import Digraph
 # * ids are optional and only there for debugging, they don't have semantics
 
 
-def constructor(cls):
-    return dataclass(
-        init=True,
-        eq=False,
-        order=False,
-        unsafe_hash=False,
-        frozen=True,
-        match_args=False,
-        kw_only=False
-    )(cls)
-
-
-@constructor
+@dataclass(eq=False, frozen=True)
 class Memory:
     id: Optional[str]
     size_bits: Optional[int]
 
 
-@constructor
+# TODO switch to single-directional channels with possibly shared bandwidth restrictions
+#  then directionality can just be encoded as two separate channels
+@dataclass(eq=False, frozen=True)
 class Channel:
     id: Optional[str]
 
@@ -41,7 +32,7 @@ class Channel:
     energy_per_bit: float
 
 
-@constructor
+@dataclass(eq=False, frozen=True)
 class Core:
     id: Optional[str]
     connected_memories: List[Memory]
@@ -59,7 +50,7 @@ def dot_html(content: str) -> str:
     return f"<{content}>"
 
 
-@constructor
+@dataclass(eq=False, frozen=True)
 class Hardware:
     id: Optional[str]
     cores: List[Core]
@@ -121,7 +112,7 @@ class Hardware:
 #   but only specific memory transfers
 # TODO dedicated input node
 # TODO change to a mutable graph representation that can also deal with accumulation
-@constructor
+@dataclass(eq=False, frozen=True)
 class OperationNode:
     id: Optional[str]
     size_bits: int
@@ -129,8 +120,10 @@ class OperationNode:
     inputs: List['OperationNode']
 
 
-# TODO split operations and values to support multiple outputs, ...
-@constructor
+# TODO split operations and values to:
+#  * support multiple outputs for a single node
+#  * clearly separate input nodes from the operation nodes
+@dataclass(eq=False, frozen=True)
 class OperationGraph:
     id: Optional[str]
     nodes: List[OperationNode]
@@ -179,7 +172,7 @@ class OperationGraph:
         return dot
 
 
-@constructor
+@dataclass(eq=False, frozen=True)
 class OperationAllocation:
     core: Core
 
@@ -190,13 +183,39 @@ class OperationAllocation:
     energy: float
 
 
-@constructor
+# TODO add set assignment problem rendering to this?
+@dataclass(eq=False, frozen=True)
 class Problem:
     id: Optional[str]
     hardware: Hardware
-    operationGraph: OperationGraph
+    graph: OperationGraph
 
     possible_allocations: Dict[OperationNode, Set[OperationAllocation]]
 
-    initial_placement: Dict[OperationNode, Tuple[Memory, Optional[int]]]
-    final_placement: Dict[OperationNode, Tuple[Memory, Optional[int]]]
+    # TODO relax this: allow free-to-place nodes, and allow specifying stuff for non-io values
+    placement_inputs: Dict[OperationNode, Memory]
+    placement_outputs: Dict[OperationNode, Memory]
+
+    def assert_valid(self):
+        # TODO assert that all cores are reachable? or at least that there's a single possible solution
+        self.hardware.assert_valid()
+        self.graph.assert_valid()
+
+        assert set(self.graph.nodes) - set(self.graph.inputs) == self.possible_allocations.keys()
+        for node, allocs in self.possible_allocations.items():
+            assert len(allocs) > 0
+
+            assert node in self.graph.nodes
+            for alloc in allocs:
+                assert alloc.core in self.hardware.cores
+                assert len(alloc.input_memories) == len(node.inputs)
+                for mem in alloc.input_memories:
+                    assert mem in range(len(self.hardware.memories))
+                assert alloc.output_memory in range(len(self.hardware.memories))
+
+        for node, mem in itertools.chain(self.placement_inputs.items(), self.placement_outputs.items()):
+            assert node in self.graph.nodes
+            assert mem in self.hardware.memories
+
+        assert self.placement_inputs.keys() == set(self.graph.inputs)
+        assert self.placement_outputs.keys() == set(self.graph.outputs)
