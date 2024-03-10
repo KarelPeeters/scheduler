@@ -69,16 +69,6 @@ def schedule(problem: Problem):
     recurse(problem, frontier, state)
 
 
-# TODO remove?
-@dataclass(frozen=True, eq=False)
-class Claim:
-    value: OperationNode
-    mem: Memory
-
-    read: bool
-    write: bool
-
-
 @dataclass(eq=False)
 class ClaimCounter:
     reads: int
@@ -275,6 +265,8 @@ class RecurseState:
             assert self.memory_contents[mem_out][node] is False
             self.memory_contents[mem_out][node] = True
 
+            for node_input in node.inputs:
+                self.value_remaining_unstarted_uses[node_input] -= 1
             for mem_input in state.action.alloc.input_memories:
                 self.active_reads[(node, mem_input)] -= 1
                 self.core_state[core] = None
@@ -367,11 +359,17 @@ def recurse(problem: Problem, frontier: SimpleFrontier, state: RecurseState):
         # TODO cancel all still-running channel transfers and subtract their energy again?
         frontier.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
 
-    # TODO check problem done, report back
-    # TODO drop fully dead values
+    # drop dead values from all memories
+    for mem, nodes_dict in state.memory_contents.items():
+        dead_values = set()
+        for node, done in nodes_dict.items():
+            if done is True and state.value_remaining_unstarted_uses[node] == 0:
+                dead_values.add(node)
+        for v in dead_values:
+            nodes_dict.pop(v, None)
 
     # TODO action: drop value from core
-    #    add a bunch of conditions to this to ensure we don't keep looping
+    #    add a bunch of conditions to this to ensure we don't get stuck looping forever
 
     # wait for the next node to finish
     first_done_time = min(
