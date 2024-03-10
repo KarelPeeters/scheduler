@@ -35,6 +35,18 @@ class Core:
     connected_memories: List[Memory]
 
 
+def dot_table(title: str, rows: List[Tuple[str, str]]) -> str:
+    table = f"<TABLE BORDER=\"0\" COLUMNS=\"*\" ROWS=\"*\"><TR><TD colspan=\"2\"><B>{title}</B></TD></TR>"
+    for key, value in rows:
+        table += f"<TR><TD>{key}</TD><TD>{value}</TD></TR>"
+    table += "</TABLE>"
+    return table
+
+
+def dot_html(content: str) -> str:
+    return f"<{content}>"
+
+
 @dataclass
 class Hardware:
     id: Optional[str]
@@ -52,24 +64,43 @@ class Hardware:
 
     def to_graphviz(self) -> Digraph:
         dot = Digraph()
+        if self.id is not None:
+            dot.attr(label=f"<<B>{self.id}</B>>")
+            dot.attr(labelloc="t")
 
         for i, mem in enumerate(self.memories):
-            dot.node(f"mem-{i}", mem.id, shape="box", color="blue")
+            size = "inf" if mem.size is None else str(mem.size)
+            label = dot_html(dot_table("Memory", [("id", mem.id), ("size", size)]))
+            dot.node(f"mem-{i}", label, shape="box",
+                     color="blue")
 
         for i, core in enumerate(self.cores):
-            dot.node(f"core-{i}", core.id, color="green")
+            label = dot_html(dot_table("Core", [("id", core.id)]))
+            dot.node(f"core-{i}", label, color="green")
             for j, mem in enumerate(core.connected_memories):
                 head = f"core-{i}"
                 tail = f"mem-{self.memories.index(mem)}"
                 dot.edge(tail, head, headlabel=str(j), dir="none")
 
         for i, chan in enumerate(self.channels):
+            rows = [
+                ("id", chan.id),
+                ("latency", str(chan.latency)),
+                ("time_per_bit", str(chan.time_per_bit)),
+                ("energy_per_bit", str(chan.energy_per_bit))
+            ]
+            label = dot_html(dot_table("Channel", rows))
+            mid = f"chan-{i}"
+            dot.node(mid, label, shape="box", style="rounded", color="orange")
+
             head = f"mem-{self.memories.index(chan.memory_a)}"
             tail = f"mem-{self.memories.index(chan.memory_b)}"
 
             dirs = {(False, False): "none", (False, True): "back", (True, False): "forward", (True, True): "both"}
             dir = dirs[(chan.dir_a_to_b, chan.dir_b_to_a)]
-            dot.edge(tail, head, label=chan.id, dir=dir)
+
+            dot.edge(tail, mid, dir=dir)
+            dot.edge(mid, head, dir=dir)
 
         return dot
 
