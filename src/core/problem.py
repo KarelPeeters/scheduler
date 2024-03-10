@@ -27,6 +27,8 @@ class Channel:
     dir_a_to_b: bool
     dir_b_to_a: bool
 
+    # TODO make this calculation a dynamic function that gets both input sizes?
+    #  this is going more back towards inheritance, but maybe it's worth it here
     latency: float
     time_per_bit: float
     energy_per_bit: float
