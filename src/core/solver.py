@@ -22,6 +22,9 @@ from core.problem import Problem, OperationNode, Memory, Channel, Core, Operatio
 
 # TODO make the pareto-front transposition aware (between hardware and graph symmetries)
 
+# TODO general effects/available system,
+#   that only allows actions that are newly available ready after waiting to be queued
+
 class SimpleFrontier:
     def __init__(self):
         self.min_time = math.inf
@@ -72,15 +75,6 @@ def schedule(problem: Problem):
     recurse(problem, frontiers, state)
 
 
-@dataclass(eq=False)
-class ClaimCounter:
-    reads: int
-    writes: int
-
-    def clone(self):
-        return ClaimCounter(self.reads, self.writes)
-
-
 @dataclass(frozen=True, eq=False)
 class ActionWait:
     time_until: float
@@ -88,6 +82,7 @@ class ActionWait:
 
 @dataclass(frozen=True, eq=False)
 class ActionCore:
+    time_start: float
     node: OperationNode
     alloc: OperationAllocation
 
@@ -97,6 +92,7 @@ class ActionCore:
 
 @dataclass(frozen=True, eq=False)
 class ActionChannel:
+    time_start: float
     channel: Channel
     source: Memory
     dest: Memory
@@ -404,9 +400,10 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
     if frontiers.simple.is_dominated(state.curr_time, state.curr_energy):
         return
 
-    # TODO why does this not work? in theory it should, we probably just need more keys!
-    # if not frontiers.partial.add(state.to_pareto_key(), None):
-    #     return
+    # TODO double check the pareto logic, why can we only do this after a wait?
+    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+        if not frontiers.partial.add(state.to_pareto_key(), None):
+            return
 
     if state.is_done(problem):
         # TODO cancel all still-running channel transfers and subtract their energy again?
@@ -457,7 +454,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
             if not inputs_available:
                 continue
 
-            next_state = state.clone_do_action(ActionCore(node=node, alloc=alloc))
+            next_state = state.clone_do_action(ActionCore(time_start=state.curr_time, node=node, alloc=alloc))
             recurse(problem, frontiers, next_state)
 
     # start transfers
@@ -491,6 +488,6 @@ def recurse_channel_actions(
                 continue
 
         # run action
-        action = ActionChannel(channel, source=source, dest=dest, value=value)
+        action = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest, value=value)
         next_state = state.clone_do_action(action)
         recurse(problem, frontiers, next_state)
