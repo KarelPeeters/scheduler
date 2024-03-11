@@ -20,3 +20,10 @@ Steps:
 * Stream: https://kuleuven-micas.github.io/stream/, https://github.com/kuleuven-micas/stream
 * This specific question from a programming competition: https://github.com/vlaamseprogrammeerwedstrijd/opgaves/blob/master/2024/cat4/tevreden/tevreden.pdf
 * The AlphaZero papers.
+
+
+## New ideas
+
+* can we formulate this as a big ILP instead?
+    * sadly these get only one solution, so we'd have to run it multiple times to get the pareto front
+    * can these even deal with pathfinding-style mem-copies?

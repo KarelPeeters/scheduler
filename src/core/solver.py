@@ -33,24 +33,29 @@ class SimpleFrontier:
         self.min_energy = math.inf
         self.min_energy_actions = None
 
+        with open("log.txt", "w"):
+            # clear log
+            pass
+
     def add_solution(self, time: float, energy: float, actions: List):
         either = False
 
-        if time < self.min_time or time == self.min_time and energy < self.min_energy:
-            either = True
-            self.min_time = time
-            self.min_time_actions = actions
-            print(f"New best time solution: ({time}, {energy})")
+        with open("log.txt", "a") as f:
+            if time < self.min_time or time == self.min_time and energy < self.min_energy:
+                either = True
+                self.min_time = time
+                self.min_time_actions = actions
+                print(f"New best time solution: ({time}, {energy})", file=f)
 
-        if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
-            either = True
-            self.min_energy = energy
-            self.min_energy_actions = actions
-            print(f"New best energy solution: ({time}, {energy})")
+            if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
+                either = True
+                self.min_energy = energy
+                self.min_energy_actions = actions
+                print(f"New best energy solution: ({time}, {energy})", file=f)
 
-        if either:
-            for action in actions:
-                print(f"  {action}")
+            if either:
+                for action in actions:
+                    print(f"  {action}", file=f)
 
     def is_dominated(self, time: float, energy: float):
         return time >= self.min_time and energy >= self.min_energy
@@ -122,12 +127,14 @@ class ActionChannel:
 
 Action = Union[ActionWait, ActionCore, ActionChannel]
 
+
 @dataclass(eq=False)
 class RecurseState:
     problem: Problem
 
     curr_time: float
     curr_energy: float
+    minimum_time: float
 
     unstarted_nodes: List[OperationNode]
     value_remaining_unstarted_uses: Dict[OperationNode, int]
@@ -165,6 +172,7 @@ class RecurseState:
 
             curr_time=0.0,
             curr_energy=0.0,
+            minimum_time=0.0,
 
             unstarted_nodes=unstarted_nodes,
             value_remaining_unstarted_uses=value_remaining_unstarted_uses,
@@ -183,6 +191,7 @@ class RecurseState:
 
             curr_time=self.curr_time,
             curr_energy=self.curr_energy,
+            minimum_time=self.minimum_time,
 
             unstarted_nodes=self.unstarted_nodes.copy(),
             value_remaining_unstarted_uses=self.value_remaining_unstarted_uses.copy(),
@@ -238,7 +247,7 @@ class RecurseState:
 
         # The pareto key (for which higher is better) consists of:
         # * costs: (-time), (-energy) (lower is better)
-        result = [-self.curr_time, -self.curr_energy]
+        result = [-self.minimum_time, -self.curr_energy]
 
         # TODO add this again
         # # * scheduling progress: [started] per core and node (higher is better)
@@ -282,6 +291,7 @@ class RecurseState:
 
     def do_action(self, action: Action):
         # print(f"Running action: {action}")
+        self.minimum_time = max(self.minimum_time, action.time_end)
 
         if isinstance(action, ActionWait):
             self.do_wait_action(action)
@@ -369,7 +379,21 @@ class RecurseState:
 # TODO optimization: only consider taking actions after waiting that were possible because of the waiting after this?
 #   or will pareto handle that for us?
 
+import time
+
+prev = time.perf_counter()
+
+
 def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
+    global prev
+    now = time.perf_counter()
+    if now - prev >= 0.1 or True:
+        prev = now
+        f = None
+        print("Current state:", file=f)
+        for action in state.actions_taken:
+            print(f"  {action}", file=f)
+
     # Always:
     # * check if the problem is done, report result
     # * drop all values that will never be used again from memories
@@ -393,9 +417,9 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
-    # if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
-    #     if not frontiers.partial.add(state.to_pareto_key(), None):
-    #         return
+    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+        if not frontiers.partial.add(state.to_pareto_key(), None):
+            return
 
     if state.is_done(problem):
         # TODO cancel all still-running channel transfers and subtract their energy again?
@@ -414,6 +438,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
 
     # TODO action: drop value from core
     #    add a bunch of conditions to this to ensure we don't get stuck looping forever
+    #      * don't copy value to core if it was "recently" (ie. without any intermediate interaction with (or write to(?)) the memory) dropped
 
     # wait for the next node to finish
     first_done_time = min(
