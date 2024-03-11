@@ -495,6 +495,10 @@ def recurse_channel_actions(
         if not done:
             continue
 
+        # check if the value is still alive
+        if state.value_remaining_unstarted_uses[value] == 0:
+            continue
+
         # check if the value is already in the target memory
         if value in state.memory_contents[dest]:
             continue
