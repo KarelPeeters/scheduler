@@ -183,7 +183,7 @@ class OperationGraph:
 class OperationAllocation:
     id: Optional[str]
     core: Core
-    input_memories: Tuple[Memory]
+    input_memories: Tuple[Memory, ...]
     output_memory: Memory
     time: float
     energy: float
