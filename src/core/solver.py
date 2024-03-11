@@ -36,13 +36,13 @@ class SimpleFrontier:
     def add_solution(self, time: float, energy: float, actions: List):
         either = False
 
-        if time < self.min_time:
+        if time < self.min_time or time == self.min_time and energy < self.min_energy:
             either = True
             self.min_time = time
             self.min_time_actions = actions
             print(f"New best time solution: ({time}, {energy})")
 
-        if energy < self.min_energy:
+        if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
             either = True
             self.min_energy = energy
             self.min_energy_actions = actions
@@ -393,9 +393,9 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
-    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
-        if not frontiers.partial.add(state.to_pareto_key(), None):
-            return
+    # if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+    #     if not frontiers.partial.add(state.to_pareto_key(), None):
+    #         return
 
     if state.is_done(problem):
         # TODO cancel all still-running channel transfers and subtract their energy again?
