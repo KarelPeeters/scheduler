@@ -77,51 +77,50 @@ def schedule(problem: Problem):
 
 @dataclass(frozen=True, eq=False)
 class ActionWait:
-    time_until: float
+    time_start: float
+    time_end: float
+
+    def __str__(self):
+        return f"ActionWait(time={self.time_start}..{self.time_end})"
 
 
 @dataclass(frozen=True, eq=False)
 class ActionCore:
     time_start: float
+
     node: OperationNode
     alloc: OperationAllocation
 
+    @property
+    def time_end(self):
+        return self.time_start + self.alloc.time
+
     def __str__(self):
-        return f"ActionCore(node={self.node.id}, alloc={self.alloc.id}, core={self.alloc.core.id})"
+        return f"ActionCore(time={self.time_start}..{self.time_end}, node={self.node.id}, alloc={self.alloc.id}, core={self.alloc.core.id})"
 
 
 @dataclass(frozen=True, eq=False)
 class ActionChannel:
     time_start: float
+
     channel: Channel
     source: Memory
     dest: Memory
     value: OperationNode
 
+    @property
+    def total_latency(self):
+        return self.channel.latency + self.value.size_bits * self.channel.time_per_bit
+
+    @property
+    def time_end(self):
+        return self.time_start + self.total_latency
+
     def __str__(self):
-        return f"ActionChannel(channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
+        return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
 
 
 Action = Union[ActionWait, ActionCore, ActionChannel]
-
-
-@dataclass(frozen=True, eq=False)
-class CoreRunning:
-    time_done: float
-    action: ActionCore
-
-    def __str__(self):
-        return f"CoreRunning(time_done={self.time_done}, action={self.action})"
-
-
-@dataclass(frozen=True, eq=False)
-class ChannelRunning:
-    time_done: float
-    action: ActionChannel
-
-    def __str__(self):
-        return f"ChannelRunning(time_done={self.time_done}, action={self.action})"
-
 
 @dataclass(eq=False)
 class RecurseState:
@@ -133,8 +132,8 @@ class RecurseState:
     unstarted_nodes: List[OperationNode]
     value_remaining_unstarted_uses: Dict[OperationNode, int]
 
-    core_state: Dict[Core, Optional[CoreRunning]]
-    channel_state: Dict[Channel, Optional[ChannelRunning]]
+    core_state: Dict[Core, Optional[ActionCore]]
+    channel_state: Dict[Channel, Optional[ActionChannel]]
     memory_contents: Dict[Memory, Dict[OperationNode, bool]]  # mem -> value -> ready
     active_reads: DefaultDict[Tuple[OperationNode, Memory], int]
 
@@ -258,10 +257,10 @@ class RecurseState:
         # * worker availability: [-next_free_time] per core and channel (lower is better)
         # TODO should time until ready be relative or absolute?
         for state in self.core_state.values():
-            time_left = 0 if state is None else state.time_done - self.curr_time
+            time_left = 0 if state is None else state.time_end - self.curr_time
             result.append(-time_left)
         for state in self.channel_state.values():
-            time_left = 0 if state is None else state.time_done - self.curr_time
+            time_left = 0 if state is None else state.time_end - self.curr_time
             result.append(-time_left)
 
         # * data availability [is_available] per mem and value (higher is better)
@@ -296,32 +295,32 @@ class RecurseState:
         self.actions_taken.append(action)
 
     def do_wait_action(self, action: ActionWait):
-        assert action.time_until > self.curr_time
-        self.curr_time = action.time_until
+        assert action.time_end > self.curr_time
+        self.curr_time = action.time_end
 
-        for core, state in self.core_state.items():
-            if state is None or state.time_done > self.curr_time:
+        for core, action in self.core_state.items():
+            if action is None or action.time_end > self.curr_time:
                 continue
 
-            node = state.action.node
-            mem_out = state.action.alloc.output_memory
+            node = action.node
+            mem_out = action.alloc.output_memory
 
             assert self.memory_contents[mem_out][node] is False
             self.memory_contents[mem_out][node] = True
 
             for node_input in node.inputs:
                 self.value_remaining_unstarted_uses[node_input] -= 1
-            for mem_input in state.action.alloc.input_memories:
+            for mem_input in action.alloc.input_memories:
                 self.active_reads[(node, mem_input)] -= 1
                 self.core_state[core] = None
 
-        for channel, state in self.channel_state.items():
-            if state is None or state.time_done > self.curr_time:
+        for channel, action in self.channel_state.items():
+            if action is None or action.time_end > self.curr_time:
                 continue
 
-            assert self.memory_contents[state.action.dest][state.action.value] is False
-            self.memory_contents[state.action.dest][state.action.value] = True
-            self.active_reads[(state.action.value, state.action.source)] -= 1
+            assert self.memory_contents[action.dest][action.value] is False
+            self.memory_contents[action.dest][action.value] = True
+            self.active_reads[(action.value, action.source)] -= 1
             self.channel_state[channel] = None
 
     def do_core_action(self, action: ActionCore):
@@ -342,25 +341,18 @@ class RecurseState:
         self.curr_energy += alloc.energy
 
         assert self.core_state[core] is None
-        self.core_state[core] = CoreRunning(
-            time_done=self.curr_time + alloc.time,
-            action=action
-        )
+        self.core_state[core] = action
 
     def do_channel_action(self, action: ActionChannel):
         assert action.value not in self.memory_contents[action.dest]
         self.memory_contents[action.dest][action.value] = False
         self.active_reads[(action.value, action.source)] += 1
 
-        time_transfer = action.channel.latency + action.value.size_bits * action.channel.time_per_bit
         energy_transfer = action.value.size_bits * action.channel.energy_per_bit
         self.curr_energy += energy_transfer
 
         assert self.channel_state[action.channel] is None
-        self.channel_state[action.channel] = ChannelRunning(
-            time_done=self.curr_time + time_transfer,
-            action=action,
-        )
+        self.channel_state[action.channel] = action
 
     def undo_action(self, _: Action):
         # TODO implement this and stop using clone for a speedup
@@ -425,11 +417,11 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
 
     # wait for the next node to finish
     first_done_time = min(
-        min((r.time_done for r in state.core_state.values() if r is not None), default=math.inf),
-        min((r.time_done for r in state.channel_state.values() if r is not None), default=math.inf),
+        min((r.time_end for r in state.core_state.values() if r is not None), default=math.inf),
+        min((r.time_end for r in state.channel_state.values() if r is not None), default=math.inf),
     )
     if first_done_time < math.inf:
-        next_state = state.clone_do_action(ActionWait(first_done_time))
+        next_state = state.clone_do_action(ActionWait(state.curr_time, first_done_time))
         recurse(problem, frontiers, next_state)
 
     # start core operations
