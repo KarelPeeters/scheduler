@@ -1,40 +1,37 @@
-from typing import Tuple, TypeVar, Generic, Dict
+from typing import TypeVar, Generic, Callable, Set
 
-V = TypeVar("V")
+T = TypeVar("T")
 
 
-class ParetoFrontier(Generic[V]):
+class ParetoFrontier(Generic[T]):
     """ Stores a pareto frontier of _maximized_ items. """
 
-    def __init__(self, item_size: int):
-        self.frontier: Dict[Tuple, V] = {}
-        self.item_size = item_size
+    def __init__(self, dominates: Callable[[T, T], bool]):
+        self.frontier: Set[T] = set()
+        self.dominates = dominates
 
-    def add(self, key: Tuple, value: V) -> bool:
+    def __len__(self):
+        return len(self.frontier)
+
+    def add(self, new: T) -> bool:
         """
         Try adding the given state to the frontier.
         Returns whether this state improves on the current frontier and was indeed added.
         """
-
-        assert isinstance(key, tuple)
-        assert len(key) == self.item_size
-
         to_remove = set()
 
         for old in self.frontier:
-            if all(a <= b for a, b in zip(key, old)):
-                # new is dominated by old
+            if self.dominates(old, new):
                 return False
-
-            if all(a > b for a, b in zip(key, old)):
-                # new dominates old
+            if self.dominates(new, old):
                 to_remove.add(old)
-                # TODO can we break here?
+                # TODO can we break here? only if "dominates" is transitive, do we guarantee that?
+                # TODO collect all values ever seen and then do some transitive and non-reflexive checks
 
         # TODO remove?
         assert len(to_remove) <= 1, "remove and document that this assumption is not actually right"
-        for r in to_remove:
-            self.frontier.pop(r)
+        for old in to_remove:
+            self.frontier.remove(old)
 
-        self.frontier[key] = value
+        self.frontier.add(new)
         return True

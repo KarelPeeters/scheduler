@@ -64,8 +64,7 @@ class SimpleFrontier:
 @dataclass(eq=False)
 class Frontiers:
     simple: SimpleFrontier
-    partial: ParetoFrontier[None]
-    complete: ParetoFrontier[List["Action"]]
+    partial: ParetoFrontier['RecurseState']
 
 
 def schedule(problem: Problem):
@@ -73,8 +72,7 @@ def schedule(problem: Problem):
 
     frontiers = Frontiers(
         simple=SimpleFrontier(),
-        partial=ParetoFrontier(len(state.to_pareto_key())),
-        complete=ParetoFrontier(2)
+        partial=ParetoFrontier(lambda new, old: new.dominates(old)),
     )
 
     recurse(problem, frontiers, state)
@@ -160,7 +158,7 @@ class RecurseState:
             for input in node.inputs:
                 value_remaining_unstarted_uses[input] += 1
         for output in graph.outputs:
-            value_remaining_unstarted_uses[output] = 1
+            value_remaining_unstarted_uses[output] += 1
 
         # memory contents
         memory_contents = {m: {} for m in hw.memories}
@@ -204,6 +202,56 @@ class RecurseState:
             actions_taken=self.actions_taken.copy(),
         )
 
+    def dominates(self, other: "RecurseState"):
+        """
+        Returns whether this state dominates `other` by being
+        strictly better in any way and better or equal in every way.
+        """
+
+        assert isinstance(self.actions_taken[-1], ActionWait)
+        assert isinstance(other.actions_taken[-1], ActionWait)
+
+        # better in any way
+        better = False
+
+        def check_minimize(self_value, other_value):
+            nonlocal better
+            if self_value > other_value:
+                return True
+            if self_value < other_value:
+                better = True
+
+        if check_minimize(self.curr_energy, other.curr_energy):
+            return False
+        if check_minimize(self.minimum_time, other.minimum_time):
+            return False
+
+        # TODO keep a set of "interesting" values on both sides
+        for v in self.problem.graph.nodes:
+            # maximize deadness
+            if check_minimize(self.value_remaining_unstarted_uses[v] != 0,
+                              other.value_remaining_unstarted_uses[v] != 0):
+                return False
+
+            self_v = ()
+            other_v = ()
+            check_minimize(self_v, other_v)
+
+        # for values (in memories): dead (no remaining usages) is better than scheduled (with lower timing done being better) is better than unscheduled
+
+        # TODO go through all properties
+        # TODO different active reads and writes should break up dominance too!
+        #       (since values being locked in different places can have implications)
+
+        # TODO for computations: started < running (by time) < done
+        #   same for memory transfers! (except it's a separate value per core/value)
+        #     what about a value being copied, dropped and then recopied? -> should be fine, dominance is not scalar
+
+        assert False, "TODO continue implementing this"  # TODO
+
+        # at this point we know we're not worse in any way, so we dominate if we're better if any way
+        return better
+
     def print(self, problem: Problem):
         hw = problem.hardware
 
@@ -242,44 +290,44 @@ class RecurseState:
         assert all(s is None for s in self.core_state.values())
         return True
 
-    def to_pareto_key(self) -> Tuple:
-        # TODO add a more complicated "dominated" option, eg. we can obvious trade memory availability for time+energy
-
-        # The pareto key (for which higher is better) consists of:
-        # * costs: (-time), (-energy) (lower is better)
-        result = [-self.minimum_time, -self.curr_energy]
-
-        # TODO add this again
-        # # * scheduling progress: [started] per core and node (higher is better)
-        # # TODO should progress by done or started? does it matter?
-        for node in self.problem.graph.nodes:
-            if node in self.problem.graph.inputs:
-                continue
-            for alloc in self.problem.possible_allocations[node]:
-                started = False
-                for action in self.actions_taken:
-                    if isinstance(action, ActionCore) and action.node == node and action.alloc == alloc:
-                        started = True
-                        break
-                result.append(started)
-
-        # * worker availability: [-next_free_time] per core and channel (lower is better)
-        # TODO should time until ready be relative or absolute?
-        for state in self.core_state.values():
-            time_left = 0 if state is None else state.time_end - self.curr_time
-            result.append(-time_left)
-        for state in self.channel_state.values():
-            time_left = 0 if state is None else state.time_end - self.curr_time
-            result.append(-time_left)
-
-        # * data availability [is_available] per mem and value (higher is better)
-        # TODO is this true once dropping gets implemented?
-        for mem in self.problem.hardware.memories:
-            for value in self.problem.graph.nodes:
-                is_available = value in self.memory_contents[mem] and self.memory_contents[mem][value]
-                result.append(is_available)
-
-        return tuple(result)
+    # def to_pareto_key(self) -> Tuple:
+    #     # TODO add a more complicated "dominated" option, eg. we can obvious trade memory availability for time+energy
+    #
+    #     # The pareto key (for which higher is better) consists of:
+    #     # * costs: (-time), (-energy) (lower is better)
+    #     result = [-self.minimum_time, -self.curr_energy]
+    #
+    #     # TODO add this again
+    #     # # * scheduling progress: [started] per core and node (higher is better)
+    #     # # TODO should progress by done or started? does it matter?
+    #     for node in self.problem.graph.nodes:
+    #         if node in self.problem.graph.inputs:
+    #             continue
+    #         for alloc in self.problem.possible_allocations[node]:
+    #             started = False
+    #             for action in self.actions_taken:
+    #                 if isinstance(action, ActionCore) and action.node == node and action.alloc == alloc:
+    #                     started = True
+    #                     break
+    #             result.append(started)
+    #
+    #     # * worker availability: [-next_free_time] per core and channel (lower is better)
+    #     # TODO should time until ready be relative or absolute?
+    #     for state in self.core_state.values():
+    #         time_left = 0 if state is None else state.time_end - self.curr_time
+    #         result.append(-time_left)
+    #     for state in self.channel_state.values():
+    #         time_left = 0 if state is None else state.time_end - self.curr_time
+    #         result.append(-time_left)
+    #
+    #     # * data availability [is_available] per mem and value (higher is better)
+    #     # TODO is this true once dropping gets implemented?
+    #     for mem in self.problem.hardware.memories:
+    #         for value in self.problem.graph.nodes:
+    #             is_available = value in self.memory_contents[mem] and self.memory_contents[mem][value]
+    #             result.append(is_available)
+    #
+    #     return tuple(result)
 
     def mem_space_used(self, dest):
         return sum(v.size_bits for v in self.memory_contents[dest])
@@ -378,6 +426,9 @@ class RecurseState:
 
 # TODO optimization: only consider taking actions after waiting that were possible because of the waiting after this?
 #   or will pareto handle that for us?
+# TODO optimization: after copying a value to a buffer, force _something_ to use it at some point
+#   equivalently refuse to drop it until it's used at least once
+#   (and then after ever change to drop it that was not taken, force using it again)
 
 import time
 
@@ -417,15 +468,16 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
-    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
-        if not frontiers.partial.add(state.to_pareto_key(), None):
-            return
+    # TODO re-enable this
+    # if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+    #     if not frontiers.partial.add(state):
+    #         return
 
     if state.is_done(problem):
         # TODO cancel all still-running channel transfers and subtract their energy again?
         #   or let the rest of the solver figure out the better solution
         frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
-        frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
+        # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
 
     # drop dead values from all memories
     for mem, nodes_dict in state.memory_contents.items():
