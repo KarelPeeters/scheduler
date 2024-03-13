@@ -75,10 +75,10 @@ def schedule(problem: Problem):
         partial=ParetoFrontier(lambda new, old: new.dominates(old)),
     )
 
-    recurse(problem, frontiers, state)
+    recurse(problem, frontiers, state, skipped_actions=[])
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=True)
 class ActionWait:
     time_start: float
     time_end: float
@@ -87,7 +87,7 @@ class ActionWait:
         return f"ActionWait(time={self.time_start}..{self.time_end})"
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=True)
 class ActionCore:
     time_start: float
 
@@ -102,7 +102,7 @@ class ActionCore:
         return f"ActionCore(time={self.time_start}..{self.time_end}, node={self.node.id}, alloc={self.alloc.id}, core={self.alloc.core.id})"
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=True)
 class ActionChannel:
     time_start: float
 
@@ -435,7 +435,7 @@ import time
 prev = time.perf_counter()
 
 
-def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
+def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action]):
     global prev
     now = time.perf_counter()
     if now - prev >= 0.1 or True:
@@ -464,7 +464,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
     graph = problem.graph
 
     # TODO remove this if the bigger one works well enough
-    if frontiers.simple.is_dominated(state.curr_time, state.curr_energy):
+    if frontiers.simple.is_dominated(state.minimum_time, state.curr_energy):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
@@ -478,6 +478,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
         #   or let the rest of the solver figure out the better solution
         frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
+        return
 
     # drop dead values from all memories
     for mem, nodes_dict in state.memory_contents.items():
@@ -498,8 +499,12 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
         min((r.time_end for r in state.channel_state.values() if r is not None), default=math.inf),
     )
     if first_done_time < math.inf:
-        next_state = state.clone_do_action(ActionWait(state.curr_time, first_done_time))
-        recurse(problem, frontiers, next_state)
+        action_wait = ActionWait(state.curr_time, first_done_time)
+        next_state = state.clone_do_action(action_wait)
+        # after a wait all actions are allowed again
+        # TODO actually no, restrict this even more
+        recurse(problem, frontiers, next_state, skipped_actions=[])
+        skipped_actions.append(action_wait)
 
     # start core operations
     for node in state.unstarted_nodes:
@@ -523,8 +528,13 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
             if not inputs_available:
                 continue
 
-            next_state = state.clone_do_action(ActionCore(time_start=state.curr_time, node=node, alloc=alloc))
-            recurse(problem, frontiers, next_state)
+            action_core = ActionCore(time_start=state.curr_time, node=node, alloc=alloc)
+            if action_core in skipped_actions:
+                continue
+
+            next_state = state.clone_do_action(action_core)
+            recurse(problem, frontiers, next_state, skipped_actions)
+            skipped_actions.append(action_core)
 
     # start transfers
     for channel in hardware.channels:
@@ -532,13 +542,13 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState):
             continue
 
         if channel.dir_a_to_b:
-            recurse_channel_actions(problem, frontiers, state, channel, channel.memory_a, channel.memory_b)
+            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_a, channel.memory_b)
         if channel.dir_b_to_a:
-            recurse_channel_actions(problem, frontiers, state, channel, channel.memory_b, channel.memory_a)
+            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_b, channel.memory_a)
 
 
 def recurse_channel_actions(
-        problem: Problem, frontiers: Frontiers, state: RecurseState,
+        problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action],
         channel: Channel, source: Memory, dest: Memory
 ):
     assert state.channel_state[channel] is None
@@ -561,6 +571,9 @@ def recurse_channel_actions(
                 continue
 
         # run action
-        action = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest, value=value)
-        next_state = state.clone_do_action(action)
-        recurse(problem, frontiers, next_state)
+        action_channel = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest, value=value)
+        if action_channel in skipped_actions:
+            continue
+        next_state = state.clone_do_action(action_channel)
+        recurse(problem, frontiers, next_state, skipped_actions)
+        skipped_actions.append(action_channel)

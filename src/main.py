@@ -54,11 +54,11 @@ def main():
     for node in nodes:
         if node in inputs:
             continue
-        allocations[node] = {
+        allocations[node] = [
             OperationAllocation("basic", core, tuple([core.connected_memories[0]] * len(node.inputs)),
                                 core.connected_memories[0], 10_000, 100)
             for core in cores
-        }
+        ]
     placement_inputs = {n: offchip_memory for n in inputs}
     placement_outputs = {n: offchip_memory for n in outputs}
     problem = Problem(

@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
 
 from graphviz import Digraph
 
@@ -196,7 +196,7 @@ class Problem:
     hardware: Hardware
     graph: OperationGraph
 
-    possible_allocations: Dict[OperationNode, Set[OperationAllocation]]
+    possible_allocations: Dict[OperationNode, List[OperationAllocation]]
 
     # TODO relax this: allow free-to-place nodes, and allow specifying stuff for non-io values
     placement_inputs: Dict[OperationNode, Memory]
