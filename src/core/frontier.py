@@ -1,4 +1,5 @@
-from typing import TypeVar, Generic, Callable, Set
+import math
+from typing import TypeVar, Generic, Callable, Set, List
 
 T = TypeVar("T")
 
@@ -35,3 +36,39 @@ class ParetoFrontier(Generic[T]):
 
         self.frontier.add(new)
         return True
+
+
+class SimpleFrontier:
+    def __init__(self):
+        self.min_time = math.inf
+        self.min_time_actions = None
+
+        self.min_energy = math.inf
+        self.min_energy_actions = None
+
+        with open("log.txt", "w"):
+            # clear log
+            pass
+
+    def add_solution(self, time: float, energy: float, actions: List):
+        either = False
+
+        with open("log.txt", "a") as f:
+            if time < self.min_time or time == self.min_time and energy < self.min_energy:
+                either = True
+                self.min_time = time
+                self.min_time_actions = actions
+                print(f"New best time solution: ({time}, {energy})", file=f)
+
+            if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
+                either = True
+                self.min_energy = energy
+                self.min_energy_actions = actions
+                print(f"New best energy solution: ({time}, {energy})", file=f)
+
+            if either:
+                for action in actions:
+                    print(f"  {action}", file=f)
+
+    def is_dominated(self, time: float, energy: float):
+        return time >= self.min_time and energy >= self.min_energy

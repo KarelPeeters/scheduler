@@ -1,10 +1,11 @@
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple, Union, DefaultDict
+from typing import List, Optional, Dict, Tuple, DefaultDict
 
-from core.frontier import ParetoFrontier
-from core.problem import Problem, OperationNode, Memory, Channel, Core, OperationAllocation
+from core.action import ActionWait, ActionCore, ActionChannel, Action
+from core.frontier import ParetoFrontier, SimpleFrontier
+from core.problem import Problem, OperationNode, Memory, Channel, Core
 
 
 # TODO add latency and energy bounds. Some examples:
@@ -25,42 +26,6 @@ from core.problem import Problem, OperationNode, Memory, Channel, Core, Operatio
 # TODO general effects/available system,
 #   that only allows actions that are newly available ready after waiting to be queued
 
-class SimpleFrontier:
-    def __init__(self):
-        self.min_time = math.inf
-        self.min_time_actions = None
-
-        self.min_energy = math.inf
-        self.min_energy_actions = None
-
-        with open("log.txt", "w"):
-            # clear log
-            pass
-
-    def add_solution(self, time: float, energy: float, actions: List):
-        either = False
-
-        with open("log.txt", "a") as f:
-            if time < self.min_time or time == self.min_time and energy < self.min_energy:
-                either = True
-                self.min_time = time
-                self.min_time_actions = actions
-                print(f"New best time solution: ({time}, {energy})", file=f)
-
-            if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
-                either = True
-                self.min_energy = energy
-                self.min_energy_actions = actions
-                print(f"New best energy solution: ({time}, {energy})", file=f)
-
-            if either:
-                for action in actions:
-                    print(f"  {action}", file=f)
-
-    def is_dominated(self, time: float, energy: float):
-        return time >= self.min_time and energy >= self.min_energy
-
-
 @dataclass(eq=False)
 class Frontiers:
     simple: SimpleFrontier
@@ -76,54 +41,6 @@ def schedule(problem: Problem):
     )
 
     recurse(problem, frontiers, state, skipped_actions=[])
-
-
-@dataclass(frozen=True, eq=True)
-class ActionWait:
-    time_start: float
-    time_end: float
-
-    def __str__(self):
-        return f"ActionWait(time={self.time_start}..{self.time_end})"
-
-
-@dataclass(frozen=True, eq=True)
-class ActionCore:
-    time_start: float
-
-    node: OperationNode
-    alloc: OperationAllocation
-
-    @property
-    def time_end(self):
-        return self.time_start + self.alloc.time
-
-    def __str__(self):
-        return f"ActionCore(time={self.time_start}..{self.time_end}, node={self.node.id}, alloc={self.alloc.id}, core={self.alloc.core.id})"
-
-
-@dataclass(frozen=True, eq=True)
-class ActionChannel:
-    time_start: float
-
-    channel: Channel
-    source: Memory
-    dest: Memory
-    value: OperationNode
-
-    @property
-    def total_latency(self):
-        return self.channel.latency + self.value.size_bits * self.channel.time_per_bit
-
-    @property
-    def time_end(self):
-        return self.time_start + self.total_latency
-
-    def __str__(self):
-        return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
-
-
-Action = Union[ActionWait, ActionCore, ActionChannel]
 
 
 @dataclass(eq=False)
