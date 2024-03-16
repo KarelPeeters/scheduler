@@ -49,4 +49,5 @@ class ActionChannel:
         return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
 
 
+RealAction = Union[ActionCore, ActionChannel]
 Action = Union[ActionWait, ActionCore, ActionChannel]
