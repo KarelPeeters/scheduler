@@ -361,15 +361,16 @@ import time
 prev = time.perf_counter()
 
 
+# TODO debug why we never visit non-redundant copy solution?
 def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action]):
     global prev
     now = time.perf_counter()
     if now - prev >= 0.1 or True:
         prev = now
         f = None
-        print("Current state:", file=f)
-        for action in state.actions_taken:
-            print(f"  {action}", file=f)
+        # print("Current state:", file=f)
+        # for action in state.actions_taken:
+        #     print(f"  {action}", file=f)
 
     # Always:
     # * check if the problem is done, report result
@@ -389,8 +390,9 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     hardware = problem.hardware
     graph = problem.graph
 
-    # TODO remove this if the bigger one works well enough
-    if frontiers.simple.is_dominated(state.minimum_time, state.curr_energy):
+    # TODO remove this once the real one works properly
+    #   (and is used even for non-wait states)
+    if frontiers.simple.is_loosely_dominated(state.minimum_time, state.curr_energy):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
@@ -521,11 +523,14 @@ def log_state(state: RecurseState):
 
     if index == 0:
         shutil.rmtree("../ignored/schedules", ignore_errors=True)
-        os.makedirs("../ignored/schedules", exist_ok=False)
+        os.makedirs("../ignored/schedules/done", exist_ok=False)
+        os.makedirs("../ignored/schedules/partial", exist_ok=False)
 
     result = Schedule(problem=state.problem, actions=state.actions_taken)
     fig, ax = plt.subplots()
     result.plot_schedule_actions(ax)
 
-    suffix = "_done" if state.is_done() else ""
-    fig.savefig(f"../ignored/schedules/schedule_{index}{suffix}.png")
+    is_done = state.is_done()
+    folder = "done" if is_done else "partial"
+    fig.savefig(f"../ignored/schedules/{folder}/schedule_{index}.png")
+    plt.close(fig)

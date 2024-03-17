@@ -1,5 +1,4 @@
-import math
-from typing import TypeVar, Generic, Callable, Set, List, Dict
+from typing import TypeVar, Generic, Callable, Set, List
 
 import matplotlib.pyplot as plt
 
@@ -45,8 +44,9 @@ class SimpleFrontier:
     def __init__(self):
         self.all_pairs = set()
         self.best_pairs = set()
+        self.rejected_pairs = set()
 
-        with open("log.txt", "w"):
+        with open("../ignored/log.txt", "w"):
             # clear log
             pass
 
@@ -70,7 +70,8 @@ class SimpleFrontier:
         if to_add:
             self.best_pairs.add((time, energy))
 
-            with open("log.txt", "a") as f:
+            print(f"New pareto solution: ({time}, {energy})", file=None)
+            with open("../ignored/log.txt", "a") as f:
                 print(f"New pareto solution: ({time}, {energy})", file=f)
                 for action in actions:
                     print(f"  {action}", file=f)
@@ -79,9 +80,14 @@ class SimpleFrontier:
         # TODO maybe update this more often?
         fig, ax = plt.subplots()
 
+        # z-order: draw non-rejected pairs last
         all_times = []
         all_energies = []
         all_colors = []
+        # for t, e in self.rejected_pairs:
+        #     all_times.append(t)
+        #     all_energies.append(e)
+        #     all_colors.append(-1)
         for t, e in self.all_pairs:
             all_times.append(t)
             all_energies.append(e)
@@ -91,9 +97,20 @@ class SimpleFrontier:
         ax.set_xlabel("time")
         ax.set_ylabel("energy")
         fig.savefig("../ignored/pairs.png")
+        plt.close(fig)
 
-    def is_dominated(self, time: float, energy: float):
+    def is_loosely_dominated(self, time: float, energy: float):
+        # note: this data structure only stores solved problems
+        #   and this check is only valid when comparing against those
+        # TODO is it? is this not just yet another partial pareto front?
         for t, e in self.best_pairs:
-            if (t < time or e < energy) and (t <= time and e <= energy):
-                return True
+            # TODO is this right? is there a better name for this?
+            if t <= time and e <= energy:
+                print(f"Rejecting {(time, energy)} because of {(t, e)}")
+
+                # only add to plot when non-overlapping
+                if (time, energy) not in self.all_pairs:
+                    self.rejected_pairs.add((time, energy))
+
+                return False
         return False

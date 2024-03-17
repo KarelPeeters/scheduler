@@ -151,7 +151,9 @@ class Schedule:
                 raise ValueError(f"Unknown action type: {action}")
 
         # update bounds (pyplot doesn't do this automatically for patches)
-        ax.set_xlim(*self.time_bounds)
+        time_start, time_end = self.time_bounds
+        if time_end > time_start:
+            ax.set_xlim(time_start, time_end)
         ax.set_ylim(-0.5, len(hw.cores) + len(hw.channels) - 0.5)
 
         ax.invert_yaxis()
