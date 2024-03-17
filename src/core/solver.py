@@ -1,7 +1,11 @@
 import math
+import os
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple, DefaultDict
+
+from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
 from core.frontier import ParetoFrontier, SimpleFrontier
@@ -126,6 +130,7 @@ class RecurseState:
         strictly better in any way and better or equal in every way.
         """
 
+        # TODO do we even need to assert this?
         assert isinstance(self.actions_taken[-1], ActionWait)
         assert isinstance(other.actions_taken[-1], ActionWait)
 
@@ -200,8 +205,8 @@ class RecurseState:
         print(f"  }}")
         print(")")
 
-    def is_done(self, problem: Problem):
-        for node, mem in problem.placement_outputs.items():
+    def is_done(self):
+        for node, mem in self.problem.placement_outputs.items():
             if node not in self.memory_contents[mem] or self.memory_contents[mem][node] is not True:
                 return False
 
@@ -387,14 +392,13 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     #     if not frontiers.partial.add(state):
     #         return
 
-    if state.is_done(problem):
+    log_state(state)
+
+    if state.is_done():
         # TODO cancel all still-running channel transfers and subtract their energy again?
         #   or let the rest of the solver figure out the better solution
         frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
-
-        result = Schedule(problem=problem, actions=state.actions_taken)
-        result.plot_all()
 
         return
 
@@ -498,3 +502,23 @@ def recurse_channel_actions(
         next_state = state.clone_do_action(action_channel)
         recurse(problem, frontiers, next_state, skipped_actions)
         skipped_actions.append(action_channel)
+
+
+next_plot_index = 0
+
+
+def log_state(state: RecurseState):
+    global next_plot_index
+    index = next_plot_index
+    next_plot_index += 1
+
+    if index == 0:
+        shutil.rmtree("../ignored/schedules", ignore_errors=True)
+        os.makedirs("../ignored/schedules", exist_ok=False)
+
+    result = Schedule(problem=state.problem, actions=state.actions_taken)
+    fig, ax = plt.subplots()
+    result.plot_schedule_actions(ax)
+
+    suffix = "_done" if state.is_done() else ""
+    fig.savefig(f"../ignored/schedules/schedule_{index}{suffix}.png")
