@@ -30,7 +30,8 @@ class ParetoFrontier(Generic[T]):
                 # TODO collect all values ever seen and then do some transitive and non-reflexive checks
 
         # TODO remove?
-        assert len(to_remove) <= 1, "remove and document that this assumption is not actually right"
+        # assert len(to_remove) <= 1, "remove and document that this assumption is not actually right"
+
         for old in to_remove:
             self.frontier.remove(old)
 

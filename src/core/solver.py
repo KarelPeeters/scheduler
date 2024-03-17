@@ -124,6 +124,16 @@ class RecurseState:
             actions_taken=self.actions_taken.copy(),
         )
 
+    def value_dom_key_min(self, value: OperationNode, memory: Memory):
+        if self.value_remaining_unstarted_uses[value] == 0:
+            # dead, best possible
+            return 0, 0
+        if value in self.memory_contents[memory]:
+            # scheduled, better if done
+            return 1, not self.memory_contents[memory]
+        # not even scheduled, worst
+        return 2, 0
+
     def dominates(self, other: "RecurseState"):
         """
         Returns whether this state dominates `other` by being
@@ -135,30 +145,28 @@ class RecurseState:
         assert isinstance(other.actions_taken[-1], ActionWait)
 
         # better in any way
-        better = False
+        compare_better = False
+        compare_worse = False
 
         def check_minimize(self_value, other_value):
-            nonlocal better
+            nonlocal compare_better, compare_worse
             if self_value > other_value:
+                compare_worse = True
                 return True
             if self_value < other_value:
-                better = True
+                compare_better = True
 
         if check_minimize(self.curr_energy, other.curr_energy):
             return False
         if check_minimize(self.minimum_time, other.minimum_time):
             return False
 
-        # TODO keep a set of "interesting" values on both sides
-        for v in self.problem.graph.nodes:
-            # maximize deadness
-            if check_minimize(self.value_remaining_unstarted_uses[v] != 0,
-                              other.value_remaining_unstarted_uses[v] != 0):
-                return False
-
-            self_v = ()
-            other_v = ()
-            check_minimize(self_v, other_v)
+        # TODO early exit eg. if both are dead
+        # TODO is just checking all these values already enough for dominance?
+        for value in self.problem.graph.nodes:
+            for mem in self.problem.hardware.memories:
+                if check_minimize(self.value_dom_key_min(value, mem), other.value_dom_key_min(value, mem)):
+                    return False
 
         # for values (in memories): dead (no remaining usages) is better than scheduled (with lower timing done being better) is better than unscheduled
 
@@ -170,10 +178,9 @@ class RecurseState:
         #   same for memory transfers! (except it's a separate value per core/value)
         #     what about a value being copied, dropped and then recopied? -> should be fine, dominance is not scalar
 
-        assert False, "TODO continue implementing this"  # TODO
-
         # at this point we know we're not worse in any way, so we dominate if we're better if any way
-        return better
+        assert not compare_worse
+        return compare_better
 
     def print(self, problem: Problem):
         hw = problem.hardware
@@ -388,9 +395,9 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
 
     # TODO double check the pareto logic, why can we only do this after a wait?
     # TODO re-enable this
-    # if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
-    #     if not frontiers.partial.add(state):
-    #         return
+    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+        if not frontiers.partial.add(state):
+            return
 
     log_state(state)
 
