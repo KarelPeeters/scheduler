@@ -9,6 +9,10 @@ class ActionWait:
     time_start: float
     time_end: float
 
+    @property
+    def energy(self):
+        return 0
+
     def __str__(self):
         return f"ActionWait(time={self.time_start}..{self.time_end})"
 
@@ -19,6 +23,10 @@ class ActionCore:
 
     node: OperationNode
     alloc: OperationAllocation
+
+    @property
+    def energy(self):
+        return self.alloc.energy
 
     @property
     def time_end(self):
@@ -38,6 +46,10 @@ class ActionChannel:
     value: OperationNode
 
     @property
+    def energy(self):
+        return self.value.size_bits * self.channel.energy_per_bit
+
+    @property
     def total_latency(self):
         return self.channel.latency + self.value.size_bits * self.channel.time_per_bit
 
@@ -49,5 +61,6 @@ class ActionChannel:
         return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
 
 
+# TODO memory value drop actions?
 RealAction = Union[ActionCore, ActionChannel]
 Action = Union[ActionWait, ActionCore, ActionChannel]

@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Tuple, DefaultDict
 from core.action import ActionWait, ActionCore, ActionChannel, Action
 from core.frontier import ParetoFrontier, SimpleFrontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
+from core.schedule import Schedule
 
 
 # TODO add latency and energy bounds. Some examples:
@@ -257,6 +258,7 @@ class RecurseState:
     def do_action(self, action: Action):
         # print(f"Running action: {action}")
         self.minimum_time = max(self.minimum_time, action.time_end)
+        self.curr_energy += action.energy
 
         if isinstance(action, ActionWait):
             self.do_wait_action(action)
@@ -313,8 +315,6 @@ class RecurseState:
             input = node.inputs[index_input]
             self.active_reads[(input, mem_input)] += 1
 
-        self.curr_energy += alloc.energy
-
         assert self.core_state[core] is None
         self.core_state[core] = action
 
@@ -322,9 +322,6 @@ class RecurseState:
         assert action.value not in self.memory_contents[action.dest]
         self.memory_contents[action.dest][action.value] = False
         self.active_reads[(action.value, action.source)] += 1
-
-        energy_transfer = action.value.size_bits * action.channel.energy_per_bit
-        self.curr_energy += energy_transfer
 
         assert self.channel_state[action.channel] is None
         self.channel_state[action.channel] = action
@@ -395,6 +392,10 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
         #   or let the rest of the solver figure out the better solution
         frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
+
+        result = Schedule(hw=problem.hardware, actions=state.actions_taken)
+        result.plot_all()
+
         return
 
     # drop dead values from all memories
@@ -459,9 +460,11 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
             continue
 
         if channel.dir_a_to_b:
-            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_a, channel.memory_b)
+            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_a,
+                                    channel.memory_b)
         if channel.dir_b_to_a:
-            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_b, channel.memory_a)
+            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_b,
+                                    channel.memory_a)
 
 
 def recurse_channel_actions(
@@ -488,7 +491,8 @@ def recurse_channel_actions(
                 continue
 
         # run action
-        action_channel = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest, value=value)
+        action_channel = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest,
+                                       value=value)
         if action_channel in skipped_actions:
             continue
         next_state = state.clone_do_action(action_channel)

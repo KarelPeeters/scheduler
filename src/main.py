@@ -1,6 +1,6 @@
 from core.problem import Hardware, Core, Memory, Channel, OperationGraph, OperationNode, Problem, OperationAllocation
 from core.solver import schedule
-import yappi
+
 
 def main():
     # TODO experiment with multiple possible allocations with a latency/memory tradeoff
@@ -11,10 +11,10 @@ def main():
     # hardware definition
     core_mem_size = 1024 * 1024
 
-    bw_chip = 32
-    bw_pcb = 32
+    bw_chip = 2
+    bw_pcb = 1
     energy_chip = 1
-    energy_pcb = 8
+    energy_pcb = 2
 
     offchip_memory = Memory("ram", None)
     memories = [Memory(f"mem-{i}", core_mem_size) for i in range(4)]
@@ -56,7 +56,7 @@ def main():
             continue
         allocations[node] = [
             OperationAllocation("basic", core, tuple([core.connected_memories[0]] * len(node.inputs)),
-                                core.connected_memories[0], 10_000, 100)
+                                core.connected_memories[0], 4000, 100)
             for core in cores
         ]
     placement_inputs = {n: offchip_memory for n in inputs}
@@ -71,10 +71,10 @@ def main():
     )
     problem.assert_valid()
 
-    yappi.start()
+    # yappi.start()
     schedule(problem)
-    yappi.stop()
-    yappi.get_func_stats().print_all()
+    # yappi.stop()
+    # yappi.get_func_stats().print_all()
 
 
 if __name__ == "__main__":
