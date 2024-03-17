@@ -5,14 +5,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from core.action import Action, ActionCore, ActionChannel, ActionWait
-from core.problem import Hardware, Memory
+from core.problem import Memory, Problem
 
 
-# TODO add memory occupancies as separate plot?
-# TODO calculate energy spent plot?
+# TODO add separately written check_valid that ensures the schedule is valid?
+#   mostly as a check that the solver didn't hit a bug
 @dataclass(frozen=True, eq=False)
 class Schedule:
-    hw: Hardware
+    problem: Problem
     actions: List[Action]
 
     @property
@@ -68,11 +68,12 @@ class Schedule:
         ax.set_xlim(*self.time_bounds)
 
     def plot_memories(self, limits: bool):
-        hw = self.hw
+        hw = self.problem.hardware
 
         # collect data
-        # TODO proper initial filling, depends on starting values
         values_time_bits = {mem: ([0.0], [0]) for mem in hw.memories}
+        for value, mem in self.problem.placement_inputs.items():
+            values_time_bits[mem][1][0] += value.size_bits
 
         def add_bits(mem: Memory, time: float, bits: int):
             pair = values_time_bits[mem]
@@ -105,7 +106,7 @@ class Schedule:
             ax = axes[mem_index]
             ax.plot(*values_time_bits[mem])
 
-            if limits and  mem.size_bits is not None:
+            if limits and mem.size_bits is not None:
                 ax.axhline(mem.size_bits, color='k', linestyle='dashed')
 
             ax.set_ylabel(f"{mem.id}\noccupancy in bits")
@@ -114,7 +115,7 @@ class Schedule:
         return fig
 
     def plot_schedule_actions(self, ax):
-        hw = self.hw
+        hw = self.problem.hardware
         actions = self.actions
 
         for action in actions:

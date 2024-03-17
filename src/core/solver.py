@@ -393,7 +393,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
         frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
 
-        result = Schedule(hw=problem.hardware, actions=state.actions_taken)
+        result = Schedule(problem=problem, actions=state.actions_taken)
         result.plot_all()
 
         return
