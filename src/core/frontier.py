@@ -1,5 +1,7 @@
 import math
-from typing import TypeVar, Generic, Callable, Set, List
+from typing import TypeVar, Generic, Callable, Set, List, Dict
+
+import matplotlib.pyplot as plt
 
 T = TypeVar("T")
 
@@ -41,35 +43,57 @@ class ParetoFrontier(Generic[T]):
 
 class SimpleFrontier:
     def __init__(self):
-        self.min_time = math.inf
-        self.min_time_actions = None
-
-        self.min_energy = math.inf
-        self.min_energy_actions = None
+        self.all_pairs = set()
+        self.best_pairs = set()
 
         with open("log.txt", "w"):
             # clear log
             pass
 
     def add_solution(self, time: float, energy: float, actions: List):
-        either = False
+        to_remove = set()
+        to_add = True
 
-        with open("log.txt", "a") as f:
-            if time < self.min_time or time == self.min_time and energy < self.min_energy:
-                either = True
-                self.min_time = time
-                self.min_time_actions = actions
-                print(f"New best time solution: ({time}, {energy})", file=f)
+        for t, e in self.best_pairs:
+            dominates = (time < t or energy < e) and (time <= t and energy <= e)
+            is_dominated = (t < time or e < energy) and (t <= time and e <= energy)
 
-            if energy < self.min_energy or energy == self.min_energy and time < self.min_time:
-                either = True
-                self.min_energy = energy
-                self.min_energy_actions = actions
-                print(f"New best energy solution: ({time}, {energy})", file=f)
+            if dominates:
+                to_remove.add((t, e))
+            if is_dominated:
+                to_add = False
 
-            if either:
+        for p in to_remove:
+            self.best_pairs.remove(p)
+
+        self.all_pairs.add((time, energy))
+        if to_add:
+            self.best_pairs.add((time, energy))
+
+            with open("log.txt", "a") as f:
+                print(f"New pareto solution: ({time}, {energy})", file=f)
                 for action in actions:
                     print(f"  {action}", file=f)
 
+        # update scatter plot
+        # TODO maybe update this more often?
+        fig, ax = plt.subplots()
+
+        all_times = []
+        all_energies = []
+        all_colors = []
+        for t, e in self.all_pairs:
+            all_times.append(t)
+            all_energies.append(e)
+            all_colors.append((t, e) in self.best_pairs)
+
+        ax.scatter(x=all_times, y=all_energies, c=all_colors)
+        ax.set_xlabel("time")
+        ax.set_ylabel("energy")
+        fig.savefig("../ignored/pairs.png")
+
     def is_dominated(self, time: float, energy: float):
-        return time >= self.min_time and energy >= self.min_energy
+        for t, e in self.best_pairs:
+            if (t < time or e < energy) and (t <= time and e <= energy):
+                return True
+        return False
