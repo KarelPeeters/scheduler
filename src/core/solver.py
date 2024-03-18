@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Tuple, DefaultDict
 from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
-from core.frontier import ParetoFrontier, SimpleFrontier
+from core.frontier import ParetoFrontier, tuple_dominates
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
 
@@ -33,7 +33,7 @@ from core.schedule import Schedule
 
 @dataclass(eq=False)
 class Frontiers:
-    simple: SimpleFrontier
+    done: ParetoFrontier[Tuple[float, float]]
     partial: ParetoFrontier['RecurseState']
 
 
@@ -41,8 +41,8 @@ def schedule(problem: Problem):
     state = RecurseState.initial(problem)
 
     frontiers = Frontiers(
-        simple=SimpleFrontier(),
-        partial=ParetoFrontier(lambda new, old: new.dominates(old)),
+        done=ParetoFrontier[Tuple[float, float]](dominates=tuple_dominates),
+        partial=ParetoFrontier(dominates=lambda curr, other: curr.dominates(other)),
     )
 
     recurse(problem, frontiers, state, skipped_actions=[])
@@ -356,21 +356,20 @@ class RecurseState:
 #   equivalently refuse to drop it until it's used at least once
 #   (and then after ever change to drop it that was not taken, force using it again)
 
-import time
 
-prev = time.perf_counter()
+# prev = time.perf_counter()
 
 
 # TODO debug why we never visit non-redundant copy solution?
 def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action]):
-    global prev
-    now = time.perf_counter()
-    if now - prev >= 0.1 or True:
-        prev = now
-        f = None
-        # print("Current state:", file=f)
-        # for action in state.actions_taken:
-        #     print(f"  {action}", file=f)
+    # global prev
+    # now = time.perf_counter()
+    # if now - prev >= 0.1 or True:
+    #     prev = now
+    #     f = None
+    # print("Current state:", file=f)
+    # for action in state.actions_taken:
+    #     print(f"  {action}", file=f)
 
     # Always:
     # * check if the problem is done, report result
@@ -390,9 +389,12 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     hardware = problem.hardware
     graph = problem.graph
 
+    # defensive copy
+    skipped_actions = list(skipped_actions)
+
     # TODO remove this once the real one works properly
     #   (and is used even for non-wait states)
-    if frontiers.simple.is_loosely_dominated(state.minimum_time, state.curr_energy):
+    if not frontiers.done.would_add((state.minimum_time, state.curr_energy)):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
@@ -401,15 +403,16 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
         if not frontiers.partial.add(state):
             return
 
-    log_state(state)
-
     if state.is_done():
         # TODO cancel all still-running channel transfers and subtract their energy again?
         #   or let the rest of the solver figure out the better solution
-        frontiers.simple.add_solution(state.curr_time, state.curr_energy, state.actions_taken)
+        frontiers.done.add((state.curr_time, state.curr_energy))
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
 
+        log_state(state, is_better=True)
         return
+
+    log_state(state, is_better=False)
 
     # drop dead values from all memories
     for mem, nodes_dict in state.memory_contents.items():
@@ -435,7 +438,6 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
         # after a wait all actions are allowed again
         # TODO actually no, restrict this even more
         recurse(problem, frontiers, next_state, skipped_actions=[])
-        skipped_actions.append(action_wait)
 
     # start core operations
     for node in state.unstarted_nodes:
@@ -516,7 +518,7 @@ def recurse_channel_actions(
 next_plot_index = 0
 
 
-def log_state(state: RecurseState):
+def log_state(state: RecurseState, is_better: bool):
     global next_plot_index
     index = next_plot_index
     next_plot_index += 1
@@ -524,13 +526,16 @@ def log_state(state: RecurseState):
     if index == 0:
         shutil.rmtree("../ignored/schedules", ignore_errors=True)
         os.makedirs("../ignored/schedules/done", exist_ok=False)
-        os.makedirs("../ignored/schedules/partial", exist_ok=False)
+        os.makedirs("../ignored/schedules/all", exist_ok=False)
+        os.makedirs("../ignored/schedules/better", exist_ok=False)
 
-    result = Schedule(problem=state.problem, actions=state.actions_taken)
+    result = Schedule(problem=state.problem, actions=state.actions_taken, curr_time=state.curr_time)
     fig, ax = plt.subplots()
     result.plot_schedule_actions(ax)
 
-    is_done = state.is_done()
-    folder = "done" if is_done else "partial"
-    fig.savefig(f"../ignored/schedules/{folder}/schedule_{index}.png")
+    fig.savefig(f"../ignored/schedules/all/schedule_{index}.png")
+    if state.is_done():
+        fig.savefig(f"../ignored/schedules/done/schedule_{index}.png")
+    if is_better:
+        fig.savefig(f"../ignored/schedules/better/schedule_{index}.png")
     plt.close(fig)

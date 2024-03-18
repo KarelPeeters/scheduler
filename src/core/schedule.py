@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -14,6 +14,7 @@ from core.problem import Memory, Problem
 class Schedule:
     problem: Problem
     actions: List[Action]
+    curr_time: Optional[float]
 
     @property
     def time_bounds(self):
@@ -155,6 +156,9 @@ class Schedule:
         if time_end > time_start:
             ax.set_xlim(time_start, time_end)
         ax.set_ylim(-0.5, len(hw.cores) + len(hw.channels) - 0.5)
+
+        if self.curr_time is not None:
+            ax.axvline(self.curr_time, color='r', linestyle='dashed')
 
         ax.invert_yaxis()
         ax.set_yticks(range(len(hw.cores) + len(hw.channels)))
