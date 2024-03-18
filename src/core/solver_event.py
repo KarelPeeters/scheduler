@@ -1,40 +1,13 @@
-from dataclasses import dataclass
-from typing import Dict, Optional, Set, Union, List, DefaultDict, Tuple
+from typing import Dict, Optional, Set, List, DefaultDict, Tuple
 
 from core.action import ActionCore, ActionChannel, Action, ActionWait, RealAction
+from core.event import EventFreeCore, EventFreeChannel, EventValueAvailable, EventReadReleased, Event
 from core.problem import Problem, Core, Channel, OperationNode, Memory
 from core.util import zip_eq
 
 
 def solve(problem: Problem):
     pass
-
-
-@dataclass(frozen=True, eq=True)
-class EventFreeCore:
-    core: Core
-
-
-@dataclass(frozen=True, eq=True)
-class EventFreeChannel:
-    channel: Channel
-
-
-@dataclass(frozen=True, eq=True)
-class EventValueAvailable:
-    mem: Memory
-    value: OperationNode
-
-
-@dataclass(frozen=True, eq=True)
-class EventReadReleased:
-    mem: Memory
-    value: OperationNode
-
-
-# TODO add dropped value event (or for deduplication purposes: "available mem size increased"
-#    (careful: make sure before and after get merged properly)
-Event = Union[EventFreeCore, EventFreeChannel, EventValueAvailable, EventReadReleased]
 
 
 class State:

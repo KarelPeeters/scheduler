@@ -4,11 +4,12 @@ import shutil
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple, DefaultDict
+from typing import List, Optional, Dict, Tuple, DefaultDict, Set
 
 from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
+from core.event import Event, EventValueAvailable, EventReadReleased, EventFreeCore, EventFreeChannel
 from core.frontier import ParetoFrontier, tuple_dominates, render_2d_frontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
@@ -48,7 +49,15 @@ def schedule(problem: Problem):
         partial=ParetoFrontier(dominates=lambda curr, other: curr.dominates(other)),
     )
 
-    recurse(problem, frontiers, state, skipped_actions=[])
+    initial_events = set()
+    for core in problem.hardware.cores:
+        initial_events.add(EventFreeCore(core))
+    for channel in problem.hardware.channels:
+        initial_events.add(EventFreeChannel(channel))
+    for value, mem in problem.placement_inputs.items():
+        initial_events.add(EventValueAvailable(mem, value))
+
+    recurse(problem, frontiers, state, events=initial_events, skipped_actions=[])
 
     end = time.perf_counter()
     print(f"Visited {next_plot_index} states in {end - start}s")
@@ -270,55 +279,82 @@ class RecurseState:
 
     def clone_do_action(self, action: Action):
         next_state = self.clone()
-        next_state.do_action(action)
+        next_state.do_action_full(action)
         return next_state
 
-    def do_action(self, action: Action):
+    def clone_do_wait(self, action: ActionWait):
+        next_state = self.clone()
+        events = next_state.do_wait_action_full(action)
+        # TODO make events part of the state?
+        return next_state, events
+
+    def do_action_full(self, action: Action):
+        assert action.time_start == self.curr_time
+
         # print(f"Running action: {action}")
         self.minimum_time = max(self.minimum_time, action.time_end)
         self.curr_energy += action.energy
 
-        if isinstance(action, ActionWait):
-            self.do_wait_action(action)
-        elif isinstance(action, ActionCore):
-            self.do_core_action(action)
+        if isinstance(action, ActionCore):
+            self.do_core_action_part(action)
         elif isinstance(action, ActionChannel):
-            self.do_channel_action(action)
+            self.do_channel_action_part(action)
         else:
-            assert False, f"unknown action type: {action}"
+            assert False, f"unexpected action type: {action}"
 
         self.actions_taken.append(action)
 
-    def do_wait_action(self, action: ActionWait):
+    def do_wait_action_full(self, action: Action) -> Set[Event]:
+        assert isinstance(action, ActionWait)
+
+        assert action.time_start == self.curr_time
         assert action.time_end > self.curr_time
         self.curr_time = action.time_end
+        self.minimum_time = max(self.minimum_time, action.time_end)
+        self.curr_energy += action.energy
 
-        for core, action in self.core_state.items():
-            if action is None or action.time_end > self.curr_time:
+        events = set()
+
+        for core, core_action in self.core_state.items():
+            if core_action is None or core_action.time_end > self.curr_time:
                 continue
 
-            node = action.node
-            mem_out = action.alloc.output_memory
+            node = core_action.node
+            mem_out = core_action.alloc.output_memory
 
             assert self.memory_contents[mem_out][node] is False
             self.memory_contents[mem_out][node] = True
+            events.add(EventValueAvailable(mem_out, node))
 
             for node_input in node.inputs:
                 self.value_remaining_unstarted_uses[node_input] -= 1
-            for mem_input in action.alloc.input_memories:
+            for mem_input in core_action.alloc.input_memories:
                 self.active_reads[(node, mem_input)] -= 1
-                self.core_state[core] = None
+                if self.active_reads[(node, mem_input)] == 0:
+                    events.add(EventReadReleased(mem_input, node))
 
-        for channel, action in self.channel_state.items():
-            if action is None or action.time_end > self.curr_time:
+            self.core_state[core] = None
+            events.add(EventFreeCore(core))
+
+        for channel, channel_action in self.channel_state.items():
+            if channel_action is None or channel_action.time_end > self.curr_time:
                 continue
 
-            assert self.memory_contents[action.dest][action.value] is False
-            self.memory_contents[action.dest][action.value] = True
-            self.active_reads[(action.value, action.source)] -= 1
-            self.channel_state[channel] = None
+            assert self.memory_contents[channel_action.dest][channel_action.value] is False
+            self.memory_contents[channel_action.dest][channel_action.value] = True
+            events.add(EventValueAvailable(channel_action.dest, channel_action.value))
 
-    def do_core_action(self, action: ActionCore):
+            self.active_reads[(channel_action.value, channel_action.source)] -= 1
+            if self.active_reads[(channel_action.value, channel_action.source)] == 0:
+                events.add(EventReadReleased(channel_action.source, channel_action.value))
+
+            self.channel_state[channel] = None
+            events.add(EventFreeChannel(channel))
+
+        self.actions_taken.append(action)
+        return events
+
+    def do_core_action_part(self, action: ActionCore):
         node = action.node
         alloc = action.alloc
         core = alloc.core
@@ -336,7 +372,7 @@ class RecurseState:
         assert self.core_state[core] is None
         self.core_state[core] = action
 
-    def do_channel_action(self, action: ActionChannel):
+    def do_channel_action_part(self, action: ActionChannel):
         assert action.value not in self.memory_contents[action.dest]
         self.memory_contents[action.dest][action.value] = False
         self.active_reads[(action.value, action.source)] += 1
@@ -367,7 +403,10 @@ class RecurseState:
 
 
 # TODO debug why we never visit non-redundant copy solution?
-def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action]):
+def recurse(
+        problem: Problem, frontiers: Frontiers, state: RecurseState,
+        events: Set[Event], skipped_actions: List[Action]
+):
     # global prev
     # now = time.perf_counter()
     # if now - prev >= 0.1 or True:
@@ -396,6 +435,8 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     graph = problem.graph
 
     # defensive copy
+    # TODO replace skipped_actions with action comparison to the last skipped action?
+    # TODO or a bigger reorg: have a separate recursion function for action starting
     skipped_actions = list(skipped_actions)
 
     # TODO remove this once the real one works properly
@@ -455,10 +496,10 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     )
     if first_done_time < math.inf:
         action_wait = ActionWait(state.curr_time, first_done_time)
-        next_state = state.clone_do_action(action_wait)
+        next_state, next_events = state.clone_do_wait(action_wait)
         # after a wait all actions are allowed again
         # TODO actually no, restrict this even more
-        recurse(problem, frontiers, next_state, skipped_actions=[])
+        recurse(problem, frontiers, next_state, next_events, skipped_actions=[])
 
     # start core operations
     for node in state.unstarted_nodes:
@@ -487,7 +528,7 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
                 continue
 
             next_state = state.clone_do_action(action_core)
-            recurse(problem, frontiers, next_state, skipped_actions)
+            recurse(problem, frontiers, next_state, events, skipped_actions)
             skipped_actions.append(action_core)
 
     # start transfers
@@ -496,15 +537,19 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
             continue
 
         if channel.dir_a_to_b:
-            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_a,
-                                    channel.memory_b)
+            recurse_channel_actions(
+                problem, frontiers, state, events, skipped_actions,
+                channel, channel.memory_a, channel.memory_b
+            )
         if channel.dir_b_to_a:
-            recurse_channel_actions(problem, frontiers, state, skipped_actions, channel, channel.memory_b,
-                                    channel.memory_a)
+            recurse_channel_actions(
+                problem, frontiers, state, events, skipped_actions,
+                channel, channel.memory_b, channel.memory_a
+            )
 
 
 def recurse_channel_actions(
-        problem: Problem, frontiers: Frontiers, state: RecurseState, skipped_actions: List[Action],
+        problem: Problem, frontiers: Frontiers, state: RecurseState, events: Set[Event], skipped_actions: List[Action],
         channel: Channel, source: Memory, dest: Memory
 ):
     assert state.channel_state[channel] is None
@@ -532,7 +577,7 @@ def recurse_channel_actions(
         if action_channel in skipped_actions:
             continue
         next_state = state.clone_do_action(action_channel)
-        recurse(problem, frontiers, next_state, skipped_actions)
+        recurse(problem, frontiers, next_state, events, skipped_actions)
         skipped_actions.append(action_channel)
 
 
