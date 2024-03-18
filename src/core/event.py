@@ -26,7 +26,12 @@ class EventReadReleased:
     value: OperationNode
 
 
-Event = Union[EventFreeCore, EventFreeChannel, EventValueAvailable, EventReadReleased]
+@dataclass(frozen=True, eq=True)
+class EventMemorySpaceIncreased:
+    mem: Memory
+
+
+Event = Union[EventFreeCore, EventFreeChannel, EventValueAvailable, EventReadReleased, EventMemorySpaceIncreased]
 
 # TODO add dropped value event (or for deduplication purposes: "available mem size increased"
 #    (careful: make sure before and after get merged properly)

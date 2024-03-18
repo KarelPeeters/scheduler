@@ -9,7 +9,8 @@ from typing import List, Optional, Dict, Tuple, DefaultDict, Set
 from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
-from core.event import Event, EventValueAvailable, EventReadReleased, EventFreeCore, EventFreeChannel
+from core.event import Event, EventValueAvailable, EventReadReleased, EventFreeCore, EventFreeChannel, \
+    EventMemorySpaceIncreased
 from core.frontier import ParetoFrontier, tuple_dominates, render_2d_frontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
@@ -438,6 +439,7 @@ def recurse(
     # TODO replace skipped_actions with action comparison to the last skipped action?
     # TODO or a bigger reorg: have a separate recursion function for action starting
     skipped_actions = list(skipped_actions)
+    events = set(events)
 
     # TODO remove this once the real one works properly
     #   (and is used even for non-wait states)
@@ -484,6 +486,7 @@ def recurse(
                 dead_values.add(node)
         for v in dead_values:
             nodes_dict.pop(v, None)
+            events.add(EventMemorySpaceIncreased(mem))
 
     # TODO action: drop value from core
     #    add a bunch of conditions to this to ensure we don't get stuck looping forever
@@ -524,7 +527,10 @@ def recurse(
                 continue
 
             action_core = ActionCore(time_start=state.curr_time, node=node, alloc=alloc)
+
             if action_core in skipped_actions:
+                continue
+            if not action_triggered_by_event(action_core, events):
                 continue
 
             next_state = state.clone_do_action(action_core)
@@ -533,6 +539,7 @@ def recurse(
 
     # start transfers
     for channel in hardware.channels:
+        # check that channel is free
         if state.channel_state[channel] is not None:
             continue
 
@@ -572,13 +579,54 @@ def recurse_channel_actions(
                 continue
 
         # run action
-        action_channel = ActionChannel(time_start=state.curr_time, channel=channel, source=source, dest=dest,
-                                       value=value)
+        action_channel = ActionChannel(
+            time_start=state.curr_time,
+            channel=channel, source=source, dest=dest,
+            value=value
+        )
+
         if action_channel in skipped_actions:
             continue
+        if not action_triggered_by_event(action_channel, events):
+            continue
+
         next_state = state.clone_do_action(action_channel)
         recurse(problem, frontiers, next_state, events, skipped_actions)
         skipped_actions.append(action_channel)
+
+
+def action_triggered_by_event(action: Action, events: Set[Event]) -> bool:
+    # TODO generate actions from events, instead of listing all possible actions and then filtering
+    # TODO it's annoying to keep this in sync with the action generation conditions,
+    #    is there a nice way to do both at once?
+
+    if isinstance(action, ActionCore):
+        # check if core is free
+        if EventFreeCore(action.alloc.core) in events:
+            return True
+        # check if the output memory has space
+        if EventMemorySpaceIncreased(action.alloc.output_memory) in events:
+            return True
+        # check if inputs are available in the right memories
+        for index_input, mem_input in enumerate(action.alloc.input_memories):
+            if EventValueAvailable(mem_input, action.node.inputs[index_input]) in events:
+                return True
+    elif isinstance(action, ActionChannel):
+        if EventFreeChannel(action.channel) in events:
+            return True
+        # check if the source value is done
+        if EventValueAvailable(action.source, action.value) in events:
+            return True
+        # check if the value is already in the target memory
+        # TODO what to do about this? this ties into not dropping unused values
+
+        # check if the value can fit in the target memory
+        if EventMemorySpaceIncreased(action.dest) in events:
+            return True
+    else:
+        assert False, f"unexpected action type: {action}"
+
+    return False
 
 
 next_plot_index = 0
