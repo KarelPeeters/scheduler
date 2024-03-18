@@ -49,9 +49,9 @@ class ParetoFrontier(Generic[T]):
         if not self.frontier:
             return True
         for old in self.frontier:
-            if self.dominates(new, old):
-                return True
-        return False
+            if self.dominates(old, new):
+                return False
+        return True
 
 
 def tuple_dominates(new: Tuple, old: Tuple) -> bool:
