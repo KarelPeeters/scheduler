@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Tuple, DefaultDict
 from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
-from core.frontier import ParetoFrontier, tuple_dominates
+from core.frontier import ParetoFrontier, tuple_dominates, render_2d_frontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
 
@@ -406,10 +406,13 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     if state.is_done():
         # TODO cancel all still-running channel transfers and subtract their energy again?
         #   or let the rest of the solver figure out the better solution
-        frontiers.done.add((state.curr_time, state.curr_energy))
+        is_better = frontiers.done.add((state.curr_time, state.curr_energy))
         # frontiers.complete.add((state.curr_time, state.curr_energy), state.actions_taken)
 
-        log_state(state, is_better=True)
+        log_state(state, is_better=is_better)
+        if is_better:
+            render_2d_frontier(frontiers.done, ("time", "energy"))
+
         return
 
     log_state(state, is_better=False)
