@@ -1,6 +1,7 @@
 import math
 import os
 import shutil
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple, DefaultDict
@@ -38,6 +39,8 @@ class Frontiers:
 
 
 def schedule(problem: Problem):
+    start = time.perf_counter()
+
     state = RecurseState.initial(problem)
 
     frontiers = Frontiers(
@@ -46,6 +49,9 @@ def schedule(problem: Problem):
     )
 
     recurse(problem, frontiers, state, skipped_actions=[])
+
+    end = time.perf_counter()
+    print(f"Visited {next_plot_index} states in {end - start}s")
 
 
 @dataclass(eq=False)
@@ -400,7 +406,10 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
     for node in state.unstarted_nodes:
         min_additional_energy += min(alloc.energy for alloc in problem.possible_allocations[node])
 
-    min_additional_time = max((min(alloc.time for alloc in problem.possible_allocations[node]) for node in state.unstarted_nodes), default=0)
+    min_additional_time = max(
+        (min(alloc.time for alloc in problem.possible_allocations[node]) for node in state.unstarted_nodes),
+        default=0
+    )
     min_time = max(state.minimum_time, state.curr_time + min_additional_time)
 
     if not frontiers.done.would_add((min_time, state.curr_energy + min_additional_energy)):
@@ -534,6 +543,8 @@ def log_state(state: RecurseState, is_better: bool):
     global next_plot_index
     index = next_plot_index
     next_plot_index += 1
+
+    return
 
     if index == 0:
         shutil.rmtree("../ignored/schedules", ignore_errors=True)
