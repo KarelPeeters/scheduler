@@ -394,7 +394,16 @@ def recurse(problem: Problem, frontiers: Frontiers, state: RecurseState, skipped
 
     # TODO remove this once the real one works properly
     #   (and is used even for non-wait states)
-    if not frontiers.done.would_add((state.minimum_time, state.curr_energy)):
+
+    # TODO put this bounding in a better place
+    min_additional_energy = 0
+    for node in state.unstarted_nodes:
+        min_additional_energy += min(alloc.energy for alloc in problem.possible_allocations[node])
+
+    min_additional_time = max((min(alloc.time for alloc in problem.possible_allocations[node]) for node in state.unstarted_nodes), default=0)
+    min_time = max(state.minimum_time, state.curr_time + min_additional_time)
+
+    if not frontiers.done.would_add((min_time, state.curr_energy + min_additional_energy)):
         return
 
     # TODO double check the pareto logic, why can we only do this after a wait?
