@@ -17,14 +17,14 @@ def main():
     energy_pcb = 2
 
     offchip_memory = Memory("ram", None)
-    memories = [Memory(f"mem-{i}", core_mem_size) for i in range(4)]
-    cores = [Core(f"core-{i}", [memories[i]]) for i in range(4)]
+    memories = [Memory(f"mem-{i}", core_mem_size) for i in range(3)]
+    cores = [Core(f"core-{i}", [memories[i]]) for i in range(3)]
 
     channels = [
         Channel("chan-01", memories[0], memories[1], True, True, 0, 1 / bw_chip, energy_chip),
-        Channel("chan-23", memories[2], memories[3], True, True, 0, 1 / bw_chip, energy_chip),
+        # Channel("chan-23", memories[2], memories[3], True, True, 0, 1 / bw_chip, energy_chip),
         Channel("chan-02", memories[0], memories[2], True, True, 0, 1 / bw_chip, energy_chip),
-        Channel("chan-13", memories[1], memories[3], True, True, 0, 1 / bw_chip, energy_chip),
+        # Channel("chan-13", memories[1], memories[3], True, True, 0, 1 / bw_chip, energy_chip),
         Channel("chan-ram", memories[0], offchip_memory, True, True, 0, 1 / bw_pcb, energy_pcb),
     ]
     hw = Hardware("hardware", cores, memories + [offchip_memory], channels)
