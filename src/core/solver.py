@@ -633,11 +633,11 @@ next_plot_index = 0
 
 
 def log_state(state: RecurseState, is_better: bool):
+    is_done = state.is_done()
+
     global next_plot_index
     index = next_plot_index
     next_plot_index += 1
-
-    return
 
     if index == 0:
         shutil.rmtree("../ignored/schedules", ignore_errors=True)
@@ -645,13 +645,18 @@ def log_state(state: RecurseState, is_better: bool):
         os.makedirs("../ignored/schedules/all", exist_ok=False)
         os.makedirs("../ignored/schedules/better", exist_ok=False)
 
-    result = Schedule(problem=state.problem, actions=state.actions_taken, curr_time=state.curr_time)
-    fig, ax = plt.subplots()
-    result.plot_schedule_actions(ax)
+    include = index % 1000 == 0
+    if include:
+        print(f"Visited {index} states")
 
-    fig.savefig(f"../ignored/schedules/all/schedule_{index}.png")
-    if state.is_done():
-        fig.savefig(f"../ignored/schedules/done/schedule_{index}.png")
-    if is_better:
-        fig.savefig(f"../ignored/schedules/better/schedule_{index}.png")
-    plt.close(fig)
+    if include or is_done or is_better:
+        result = Schedule(problem=state.problem, actions=state.actions_taken, curr_time=state.curr_time)
+        fig, ax = plt.subplots()
+        result.plot_schedule_actions(ax)
+
+        fig.savefig(f"../ignored/schedules/all/schedule_{index}.png")
+        if is_done:
+            fig.savefig(f"../ignored/schedules/done/schedule_{index}.png")
+        if is_better:
+            fig.savefig(f"../ignored/schedules/better/schedule_{index}.png")
+        plt.close(fig)

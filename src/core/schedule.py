@@ -163,3 +163,14 @@ class Schedule:
         ax.invert_yaxis()
         ax.set_yticks(range(len(hw.cores) + len(hw.channels)))
         ax.set_yticklabels([core.id for core in hw.cores] + [chan.id for chan in hw.channels])
+
+        time_used = time_end - time_start
+        energy_used = sum(a.energy for a in actions)
+
+        # format as int if possible
+        if int(time_used) == time_used:
+            time_used = int(time_used)
+        if int(energy_used) == energy_used:
+            energy_used = int(energy_used)
+
+        ax.set_title(f"Schedule time={time_used}, energy={energy_used}")
