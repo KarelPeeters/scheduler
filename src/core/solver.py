@@ -544,6 +544,7 @@ def recurse(
     log_state(state, is_better=False)
 
     # drop dead values from all memories
+    mem_occupancy_before = {mem: state.mem_space_used(mem) for mem in hardware.memories}
     for mem, nodes_dict in state.memory_contents.items():
         dead_values = set()
         for node, time_ready in nodes_dict.items():
@@ -596,7 +597,7 @@ def recurse(
 
             if action_core in skipped_actions:
                 continue
-            if not action_triggered_by_event(action_core, events):
+            if not action_triggered_by_event(action_core, events, mem_occupancy_before):
                 continue
 
             next_state = state.clone_do_action(action_core)
@@ -611,19 +612,20 @@ def recurse(
 
         if channel.dir_a_to_b:
             recurse_channel_actions(
-                problem, frontiers, state, events, skipped_actions,
+                problem, frontiers, state, events, skipped_actions, mem_occupancy_before,
                 channel, channel.memory_a, channel.memory_b
             )
         if channel.dir_b_to_a:
             recurse_channel_actions(
-                problem, frontiers, state, events, skipped_actions,
+                problem, frontiers, state, events, skipped_actions, mem_occupancy_before,
                 channel, channel.memory_b, channel.memory_a
             )
 
 
 def recurse_channel_actions(
         problem: Problem, frontiers: Frontiers, state: RecurseState, events: Set[Event], skipped_actions: List[Action],
-        channel: Channel, source: Memory, dest: Memory
+        mem_occupancy_before: Dict[Memory, int],
+        channel: Channel, source: Memory, dest: Memory,
 ):
     assert state.channel_state[channel] is None
     for value, time_available in state.memory_contents[source].items():
@@ -654,7 +656,7 @@ def recurse_channel_actions(
 
         if action_channel in skipped_actions:
             continue
-        if not action_triggered_by_event(action_channel, events):
+        if not action_triggered_by_event(action_channel, events, mem_occupancy_before):
             continue
 
         next_state = state.clone_do_action(action_channel)
@@ -662,7 +664,7 @@ def recurse_channel_actions(
         skipped_actions.append(action_channel)
 
 
-def action_triggered_by_event(action: Action, events: Set[Event]) -> bool:
+def action_triggered_by_event(action: Action, events: Set[Event], mem_occupancy_before: Dict[Memory, int]) -> bool:
     # TODO generate actions from events, instead of listing all possible actions and then filtering
     # TODO it's annoying to keep this in sync with the action generation conditions,
     #    is there a nice way to do both at once?
@@ -673,7 +675,10 @@ def action_triggered_by_event(action: Action, events: Set[Event]) -> bool:
             return True
         # check if the output memory has space
         if EventMemorySpaceIncreased(action.alloc.output_memory) in events:
-            return True
+            # (and that there wasn't enough space before)
+            if ((action.node.size_bits + mem_occupancy_before[action.alloc.output_memory]
+                 > action.alloc.output_memory.size_bits)):
+                return True
         # check if inputs are available in the right memories
         for index_input, mem_input in enumerate(action.alloc.input_memories):
             if EventValueAvailable(mem_input, action.node.inputs[index_input]) in events:
@@ -689,7 +694,8 @@ def action_triggered_by_event(action: Action, events: Set[Event]) -> bool:
 
         # check if the value can fit in the target memory
         if EventMemorySpaceIncreased(action.mem_dest) in events:
-            return True
+            if action.value.size_bits + mem_occupancy_before[action.mem_dest] > action.mem_dest.size_bits:
+                return True
     else:
         assert False, f"unexpected action type: {action}"
 
