@@ -81,8 +81,8 @@ class State:
                 continue
 
             # update values
-            self.value_mark_available_now(mem=action.dest, value=action.value, events=events)
-            self.value_release_read(mem=action.source, value=action.value, events=events)
+            self.value_mark_available_now(mem=action.mem_dest, value=action.value, events=events)
+            self.value_release_read(mem=action.mem_source, value=action.value, events=events)
 
             # clear state
             self.state_channel[channel] = None

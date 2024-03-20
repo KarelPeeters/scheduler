@@ -90,7 +90,7 @@ class Schedule:
             elif isinstance(action, ActionCore):
                 add_bits(mem=action.alloc.output_memory, time=action.time_start, bits=action.node.size_bits)
             elif isinstance(action, ActionChannel):
-                add_bits(mem=action.dest, time=action.time_start, bits=action.value.size_bits)
+                add_bits(mem=action.mem_dest, time=action.time_start, bits=action.value.size_bits)
             else:
                 raise ValueError(f"Unknown action type: {action}")
 
@@ -140,9 +140,9 @@ class Schedule:
                 rect = plt.Rectangle(rect_xy, action.total_latency, 1, color='orange', fill=False)
                 ax.add_patch(rect)
 
-                if action.source == action.channel.memory_a:
+                if action.mem_source == action.channel.memory_a:
                     dir = "->"
-                elif action.source == action.channel.memory_b:
+                elif action.mem_source == action.channel.memory_b:
                     dir = "<-"
                 else:
                     dir = "?"

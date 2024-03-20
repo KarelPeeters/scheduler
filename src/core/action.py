@@ -41,8 +41,8 @@ class ActionChannel:
     time_start: float
 
     channel: Channel
-    source: Memory
-    dest: Memory
+    mem_source: Memory
+    mem_dest: Memory
     value: OperationNode
 
     @property
@@ -58,7 +58,7 @@ class ActionChannel:
         return self.time_start + self.total_latency
 
     def __str__(self):
-        return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.source.id}, dest={self.dest.id})"
+        return f"ActionChannel(time={self.time_start}..{self.time_end}, channel={self.channel.id}, value={self.value.id}, source={self.mem_source.id}, dest={self.mem_dest.id})"
 
 
 # TODO memory value drop actions?

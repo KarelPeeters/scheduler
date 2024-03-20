@@ -1,5 +1,7 @@
 [//]: # (TODO move comments from the source code into this document to keep source readable)
 
+[//]: # (TODO steal remaining ideas from solver_event and delete it)
+
 [//]: # (TODO turn this document into a checklist?)
 
 # Core features
@@ -23,8 +25,9 @@
 * Try doing *nothing* first, certainly for channel operations and maybe even for core ops.
   * =immediately blacklist
 * Add cuts (refuse to take branch if some condition is false)
+  * Don't allow more instances of a value to be alive (and not-used) then will be used in the future.
 * Add bounds (give up if we can't beat the current front)
-  * Add conservative estimates to energy and timing to get higher bounds.  
+  * Add conservative estimates to energy and timing to get higher bounds.
 * Symmetry breaking:
     * Intrinsic in the formulation: multiple actions that start at the same time should
       _not_ be tried in different orders.
@@ -32,6 +35,8 @@
     * Part of the architecture (eg. uniform grid)
     * Switch to an event system where we only start operations if they could not have started earlier for some reason.
         * (eg. core occupied, no memory space (and couldn't drop yet because someone was using it), channel occupied, ...)
+* Improve pareto check
+  * Mark earlier availability of values better?
 
 # Low level optimizations
 

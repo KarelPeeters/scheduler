@@ -14,6 +14,7 @@ from core.event import Event, EventValueAvailable, EventReadReleased, EventFreeC
 from core.frontier import ParetoFrontier, tuple_dominates, render_2d_frontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
+from core.util import zip_eq
 
 
 # TODO add latency and energy bounds. Some examples:
@@ -77,10 +78,66 @@ class RecurseState:
 
     core_state: Dict[Core, Optional[ActionCore]]
     channel_state: Dict[Channel, Optional[ActionChannel]]
-    memory_contents: Dict[Memory, Dict[OperationNode, bool]]  # mem -> value -> ready
+
+    # mem -> value -> time_available (None if already available)
+    memory_contents: Dict[Memory, Dict[OperationNode, Optional[float]]]
+    # (node, mem) -> read
+    # TODO add times to this too?
     active_reads: DefaultDict[Tuple[OperationNode, Memory], int]
 
     actions_taken: List[Action]
+
+    def assert_valid(self):
+        # type checks
+        assert isinstance(self.problem, Problem)
+        assert isinstance(self.curr_time, float)
+        assert isinstance(self.curr_energy, float)
+        assert isinstance(self.minimum_time, float)
+
+        assert isinstance(self.unstarted_nodes, list)
+        for node in self.unstarted_nodes:
+            assert isinstance(node, OperationNode)
+
+        assert isinstance(self.value_remaining_unstarted_uses, dict)
+        for node, uses in self.value_remaining_unstarted_uses.items():
+            assert isinstance(node, OperationNode)
+            assert isinstance(uses, int)
+
+        expected_active_reads = {}
+
+        assert isinstance(self.core_state, dict)
+        for core, action in self.core_state.items():
+            assert isinstance(core, Core)
+            assert action is None or isinstance(action, ActionCore)
+            if action is not None:
+                for index_input, mem_input in enumerate(action.alloc.input_memories):
+                    key = (action.node.inputs[index_input], mem_input)
+                    expected_active_reads.setdefault(key, 0)
+                    expected_active_reads[key] += 1
+                assert self.memory_contents[action.alloc.output_memory][action.node] == action.time_end
+
+        assert isinstance(self.channel_state, dict)
+        for channel, action in self.channel_state.items():
+            assert isinstance(channel, Channel)
+            assert action is None or isinstance(action, ActionChannel)
+
+            if action is not None:
+                expected_active_reads.setdefault((action.value, action.mem_source), 0)
+                expected_active_reads[(action.value, action.mem_source)] += 1
+                assert self.memory_contents[action.mem_dest][action.value] == action.time_end
+
+        assert isinstance(self.memory_contents, dict)
+        for memory, nodes_dict in self.memory_contents.items():
+            assert isinstance(memory, Memory)
+            for node, time_available in nodes_dict.items():
+                assert isinstance(node, OperationNode)
+                assert time_available is None or isinstance(time_available, float)
+
+        assert isinstance(self.active_reads, defaultdict)
+        for (node, memory), counter in self.active_reads.items():
+            assert isinstance(node, OperationNode)
+            assert isinstance(memory, Memory)
+            assert isinstance(counter, int)
 
     @staticmethod
     def initial(problem: Problem):
@@ -101,7 +158,7 @@ class RecurseState:
         # memory contents
         memory_contents = {m: {} for m in hw.memories}
         for node, memory in problem.placement_inputs.items():
-            memory_contents[memory][node] = True
+            memory_contents[memory][node] = None
 
         return RecurseState(
             problem=problem,
@@ -145,16 +202,34 @@ class RecurseState:
             # dead, best possible
             return 0, 0
         if value in self.memory_contents[memory]:
-            # scheduled, better if done
-            return 1, not self.memory_contents[memory]
+            # scheduled, better if done (or done earlier)
+            time_ready = self.memory_contents[memory][value]
+            if time_ready is None:
+                return 1, 0
+            else:
+                return 2, -time_ready
         # not even scheduled, worst
-        return 2, 0
+        return 3, 0
+
+    def core_dom_key_min(self, core: Core):
+        if self.core_state[core] is None:
+            return 0, 0
+        return 1, -self.core_state[core].time_end
+
+    def channel_dom_key_min(self, channel: Channel):
+        if self.channel_state[channel] is None:
+            return 0, 0
+        return 1, -self.channel_state[channel].time_end
 
     def dominates(self, other: "RecurseState"):
         """
         Returns whether this state dominates `other` by being
         strictly better in any way and better or equal in every way.
         """
+
+        # TODO better way to think about this:
+        #   return true iff we can reach "other" from "self" by doing some useless actions:
+        #     waiting, burning energy, dropping values, ...
 
         # TODO do we even need to assert this?
         assert isinstance(self.actions_taken[-1], ActionWait)
@@ -172,17 +247,29 @@ class RecurseState:
             if self_value < other_value:
                 compare_better = True
 
+        # energy and time
         if check_minimize(self.curr_energy, other.curr_energy):
             return False
         if check_minimize(self.minimum_time, other.minimum_time):
             return False
 
+        # value in memory availability
         # TODO early exit eg. if both are dead
         # TODO is just checking all these values already enough for dominance?
         for value in self.problem.graph.nodes:
             for mem in self.problem.hardware.memories:
                 if check_minimize(self.value_dom_key_min(value, mem), other.value_dom_key_min(value, mem)):
                     return False
+
+        # core and channel free-ness
+        for core in self.problem.hardware.cores:
+            if check_minimize(self.core_dom_key_min(core), other.core_dom_key_min(core)):
+                return False
+        for channel in self.problem.hardware.channels:
+            if check_minimize(self.channel_dom_key_min(channel), other.channel_dom_key_min(channel)):
+                return False
+
+        # TODO add value unlock times?
 
         # for values (in memories): dead (no remaining usages) is better than scheduled (with lower timing done being better) is better than unscheduled
 
@@ -230,50 +317,11 @@ class RecurseState:
 
     def is_done(self):
         for node, mem in self.problem.placement_outputs.items():
-            if node not in self.memory_contents[mem] or self.memory_contents[mem][node] is not True:
+            if node not in self.memory_contents[mem] or self.memory_contents[mem][node] is not None:
                 return False
 
         assert all(s is None for s in self.core_state.values())
         return True
-
-    # def to_pareto_key(self) -> Tuple:
-    #     # TODO add a more complicated "dominated" option, eg. we can obvious trade memory availability for time+energy
-    #
-    #     # The pareto key (for which higher is better) consists of:
-    #     # * costs: (-time), (-energy) (lower is better)
-    #     result = [-self.minimum_time, -self.curr_energy]
-    #
-    #     # TODO add this again
-    #     # # * scheduling progress: [started] per core and node (higher is better)
-    #     # # TODO should progress by done or started? does it matter?
-    #     for node in self.problem.graph.nodes:
-    #         if node in self.problem.graph.inputs:
-    #             continue
-    #         for alloc in self.problem.possible_allocations[node]:
-    #             started = False
-    #             for action in self.actions_taken:
-    #                 if isinstance(action, ActionCore) and action.node == node and action.alloc == alloc:
-    #                     started = True
-    #                     break
-    #             result.append(started)
-    #
-    #     # * worker availability: [-next_free_time] per core and channel (lower is better)
-    #     # TODO should time until ready be relative or absolute?
-    #     for state in self.core_state.values():
-    #         time_left = 0 if state is None else state.time_end - self.curr_time
-    #         result.append(-time_left)
-    #     for state in self.channel_state.values():
-    #         time_left = 0 if state is None else state.time_end - self.curr_time
-    #         result.append(-time_left)
-    #
-    #     # * data availability [is_available] per mem and value (higher is better)
-    #     # TODO is this true once dropping gets implemented?
-    #     for mem in self.problem.hardware.memories:
-    #         for value in self.problem.graph.nodes:
-    #             is_available = value in self.memory_contents[mem] and self.memory_contents[mem][value]
-    #             result.append(is_available)
-    #
-    #     return tuple(result)
 
     def mem_space_used(self, dest):
         return sum(v.size_bits for v in self.memory_contents[dest])
@@ -288,6 +336,26 @@ class RecurseState:
         events = next_state.do_wait_action_full(action)
         # TODO make events part of the state?
         return next_state, events
+
+    def active_read_add(self, mem: Memory, value: OperationNode):
+        assert isinstance(mem, Memory) and isinstance(value, OperationNode)
+        key = (value, mem)
+        self.active_reads.setdefault(key, 0)
+        self.active_reads[key] += 1
+
+    def active_read_drop(self, mem: Memory, value: OperationNode, events: Set[Event]):
+        assert isinstance(mem, Memory) and isinstance(value, OperationNode)
+        key = (value, mem)
+        assert key in self.active_reads
+
+        self.active_reads[key] -= 1
+
+        count = self.active_reads[key]
+        assert count >= 0
+
+        if count == 0:
+            self.active_reads.pop(key)
+            events.add(EventReadReleased(mem, value))
 
     def do_action_full(self, action: Action):
         assert action.time_start == self.curr_time
@@ -323,16 +391,13 @@ class RecurseState:
             node = core_action.node
             mem_out = core_action.alloc.output_memory
 
-            assert self.memory_contents[mem_out][node] is False
-            self.memory_contents[mem_out][node] = True
+            assert self.memory_contents[mem_out][node] is not None
+            self.memory_contents[mem_out][node] = None
             events.add(EventValueAvailable(mem_out, node))
 
-            for node_input in node.inputs:
-                self.value_remaining_unstarted_uses[node_input] -= 1
-            for mem_input in core_action.alloc.input_memories:
-                self.active_reads[(node, mem_input)] -= 1
-                if self.active_reads[(node, mem_input)] == 0:
-                    events.add(EventReadReleased(mem_input, node))
+            for value_input, mem_input in zip_eq(node.inputs, core_action.alloc.input_memories):
+                self.value_remaining_unstarted_uses[value_input] -= 1
+                self.active_read_drop(mem_input, value_input, events)
 
             self.core_state[core] = None
             events.add(EventFreeCore(core))
@@ -341,13 +406,11 @@ class RecurseState:
             if channel_action is None or channel_action.time_end > self.curr_time:
                 continue
 
-            assert self.memory_contents[channel_action.dest][channel_action.value] is False
-            self.memory_contents[channel_action.dest][channel_action.value] = True
-            events.add(EventValueAvailable(channel_action.dest, channel_action.value))
+            assert self.memory_contents[channel_action.mem_dest][channel_action.value] is not None
+            self.memory_contents[channel_action.mem_dest][channel_action.value] = None
+            events.add(EventValueAvailable(channel_action.mem_dest, channel_action.value))
 
-            self.active_reads[(channel_action.value, channel_action.source)] -= 1
-            if self.active_reads[(channel_action.value, channel_action.source)] == 0:
-                events.add(EventReadReleased(channel_action.source, channel_action.value))
+            self.active_read_drop(channel_action.mem_source, channel_action.value, events)
 
             self.channel_state[channel] = None
             events.add(EventFreeChannel(channel))
@@ -362,10 +425,10 @@ class RecurseState:
 
         self.unstarted_nodes.remove(node)
 
-        # add claims
         assert node not in self.memory_contents[alloc.output_memory]
-        self.memory_contents[alloc.output_memory][node] = False
+        self.memory_contents[alloc.output_memory][node] = action.time_end
 
+        # add claims
         for index_input, mem_input in enumerate(alloc.input_memories):
             input = node.inputs[index_input]
             self.active_reads[(input, mem_input)] += 1
@@ -374,9 +437,9 @@ class RecurseState:
         self.core_state[core] = action
 
     def do_channel_action_part(self, action: ActionChannel):
-        assert action.value not in self.memory_contents[action.dest]
-        self.memory_contents[action.dest][action.value] = False
-        self.active_reads[(action.value, action.source)] += 1
+        assert action.value not in self.memory_contents[action.mem_dest]
+        self.memory_contents[action.mem_dest][action.value] = action.time_end
+        self.active_reads[(action.value, action.mem_source)] += 1
 
         assert self.channel_state[action.channel] is None
         self.channel_state[action.channel] = action
@@ -435,6 +498,8 @@ def recurse(
     hardware = problem.hardware
     graph = problem.graph
 
+    state.assert_valid()
+
     # defensive copy
     # TODO replace skipped_actions with action comparison to the last skipped action?
     # TODO or a bigger reorg: have a separate recursion function for action starting
@@ -481,8 +546,9 @@ def recurse(
     # drop dead values from all memories
     for mem, nodes_dict in state.memory_contents.items():
         dead_values = set()
-        for node, done in nodes_dict.items():
-            if done is True and state.value_remaining_unstarted_uses[node] == 0:
+        for node, time_ready in nodes_dict.items():
+            # TODO dead values should never even be started, add an assert for this
+            if time_ready is None and state.value_remaining_unstarted_uses[node] == 0:
                 dead_values.add(node)
         for v in dead_values:
             nodes_dict.pop(v, None)
@@ -520,7 +586,7 @@ def recurse(
             inputs_available = True
             for index_input, mem_input in enumerate(alloc.input_memories):
                 input = node.inputs[index_input]
-                if input not in state.memory_contents[mem_input] or not state.memory_contents[mem_input][input]:
+                if input not in state.memory_contents[mem_input] or state.memory_contents[mem_input][input] is not None:
                     inputs_available = False
                     break
             if not inputs_available:
@@ -560,16 +626,17 @@ def recurse_channel_actions(
         channel: Channel, source: Memory, dest: Memory
 ):
     assert state.channel_state[channel] is None
-    for value, done in state.memory_contents[source].items():
+    for value, time_available in state.memory_contents[source].items():
         # check if the source value is done
-        if not done:
+        if time_available is not None:
             continue
 
         # check if the value is still alive
         if state.value_remaining_unstarted_uses[value] == 0:
             continue
 
-        # check if the value is already in the target memory
+        # check if the value is already (going to be in) the target memory
+        # TODO what if we're faster/cheaper? if everything is right another attempt will catch that
         if value in state.memory_contents[dest]:
             continue
 
@@ -581,7 +648,7 @@ def recurse_channel_actions(
         # run action
         action_channel = ActionChannel(
             time_start=state.curr_time,
-            channel=channel, source=source, dest=dest,
+            channel=channel, mem_source=source, mem_dest=dest,
             value=value
         )
 
@@ -615,13 +682,13 @@ def action_triggered_by_event(action: Action, events: Set[Event]) -> bool:
         if EventFreeChannel(action.channel) in events:
             return True
         # check if the source value is done
-        if EventValueAvailable(action.source, action.value) in events:
+        if EventValueAvailable(action.mem_source, action.value) in events:
             return True
         # check if the value is already in the target memory
         # TODO what to do about this? this ties into not dropping unused values
 
         # check if the value can fit in the target memory
-        if EventMemorySpaceIncreased(action.dest) in events:
+        if EventMemorySpaceIncreased(action.mem_dest) in events:
             return True
     else:
         assert False, f"unexpected action type: {action}"
