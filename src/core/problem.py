@@ -170,7 +170,7 @@ class OperationGraph:
                 rows.append(("output", str(output)))
 
             label = dot_html(dot_table("Node", rows))
-            dot.node(f"node-{i}", label, shape="box", color="blue")
+            dot.node(f"node-{i}", label, shape="box", color="green")
             for j, input in enumerate(node.inputs):
                 head = f"node-{self.nodes.index(input)}"
                 tail = f"node-{i}"
