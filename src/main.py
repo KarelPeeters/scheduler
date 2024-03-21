@@ -29,7 +29,9 @@ def main():
     ]
     hw = Hardware("hardware", cores, memories + [offchip_memory], channels)
     hw.assert_valid()
-    hw.to_graphviz().render("../ignored/hardware", format="svg")
+    hw_graphviz = hw.to_graphviz()
+    hw_graphviz.render("../ignored/hardware", format="svg")
+    hw_graphviz.render("../ignored/hardware", format="png")
 
     # graph definition
     # TODO add weights (and maybe allow them to be stationary?)
@@ -47,7 +49,9 @@ def main():
     graph = OperationGraph(id="graph", nodes=nodes, inputs=inputs, outputs=outputs)
 
     graph.assert_valid()
-    graph.to_graphviz().render("../ignored/graph", format="svg")
+    graph_graphviz = graph.to_graphviz()
+    graph_graphviz.render("../ignored/graph", format="svg")
+    graph_graphviz.render("../ignored/graph", format="png")
 
     # problem definition
     allocations = {}
