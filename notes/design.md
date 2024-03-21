@@ -37,6 +37,8 @@
         * (eg. core occupied, no memory space (and couldn't drop yet because someone was using it), channel occupied, ...)
 * Improve pareto check
   * Mark earlier availability of values better?
+* Post-pruning: prune useless operations once we reach a done state, immediately setting better bounds.
+  * We can prune even earlier, eg. as soon as a value is dead we can prune all copies of it that haven't been used.
 
 # Low level optimizations
 
