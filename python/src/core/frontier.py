@@ -109,5 +109,5 @@ def render_2d_frontier(frontier: ParetoFrontier[Tuple[float, float]], names: Tup
     ax.scatter(x=all_times, y=all_energies, c=all_colors)
     ax.set_xlabel(names[0])
     ax.set_ylabel(names[1])
-    fig.savefig("../ignored/schedules/frontier.png")
+    fig.savefig("../../ignored/schedules/frontier.png")
     plt.close(fig)

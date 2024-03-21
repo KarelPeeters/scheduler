@@ -628,6 +628,9 @@ def recurse(
 
     log_state(state, is_better=False)
 
+    # if next_plot_index >= 10_000:
+    #     return
+
     if next_plot_index % 1000 == 0:
         print(f"Frontier sizes: done={len(frontiers.done)}, partial={len(frontiers.partial)}")
 
@@ -765,10 +768,10 @@ def log_state(state: RecurseState, is_better: bool):
     next_plot_index += 1
 
     if index == 0:
-        shutil.rmtree("../ignored/schedules", ignore_errors=True)
-        os.makedirs("../ignored/schedules/done", exist_ok=False)
-        os.makedirs("../ignored/schedules/all", exist_ok=False)
-        os.makedirs("../ignored/schedules/better", exist_ok=False)
+        shutil.rmtree("../../ignored/schedules", ignore_errors=True)
+        os.makedirs("../../ignored/schedules/done", exist_ok=False)
+        os.makedirs("../../ignored/schedules/all", exist_ok=False)
+        os.makedirs("../../ignored/schedules/better", exist_ok=False)
 
     include = index % 1000 == 0
     if include:
@@ -779,9 +782,9 @@ def log_state(state: RecurseState, is_better: bool):
         fig, ax = plt.subplots()
         result.plot_schedule_actions(ax)
 
-        fig.savefig(f"../ignored/schedules/all/schedule_{index}.png")
+        fig.savefig(f"../../ignored/schedules/all/schedule_{index}.png")
         if is_done:
-            fig.savefig(f"../ignored/schedules/done/schedule_{index}.png")
+            fig.savefig(f"../../ignored/schedules/done/schedule_{index}.png")
         if is_better:
-            fig.savefig(f"../ignored/schedules/better/schedule_{index}.png")
+            fig.savefig(f"../../ignored/schedules/better/schedule_{index}.png")
         plt.close(fig)

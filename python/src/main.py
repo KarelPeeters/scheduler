@@ -30,8 +30,8 @@ def main():
     hw = Hardware("hardware", cores, memories + [offchip_memory], channels)
     hw.assert_valid()
     hw_graphviz = hw.to_graphviz()
-    hw_graphviz.render("../ignored/hardware", format="svg")
-    hw_graphviz.render("../ignored/hardware", format="png")
+    hw_graphviz.render("../../ignored/hardware", format="svg")
+    hw_graphviz.render("../../ignored/hardware", format="png")
 
     # graph definition
     # TODO add weights (and maybe allow them to be stationary?)
@@ -50,8 +50,8 @@ def main():
 
     graph.assert_valid()
     graph_graphviz = graph.to_graphviz()
-    graph_graphviz.render("../ignored/graph", format="svg")
-    graph_graphviz.render("../ignored/graph", format="png")
+    graph_graphviz.render("../../ignored/graph", format="svg")
+    graph_graphviz.render("../../ignored/graph", format="png")
 
     # problem definition
     allocations = {}
