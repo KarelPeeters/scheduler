@@ -9,8 +9,6 @@ from typing import List, Optional, Dict, Tuple, DefaultDict, Set
 from matplotlib import pyplot as plt
 
 from core.action import ActionWait, ActionCore, ActionChannel, Action
-from core.event import Event, EventValueAvailable, EventReadReleased, EventFreeCore, EventFreeChannel, \
-    EventMemorySpaceIncreased
 from core.frontier import ParetoFrontier, tuple_dominates, render_2d_frontier
 from core.problem import Problem, OperationNode, Memory, Channel, Core
 from core.schedule import Schedule
@@ -51,13 +49,13 @@ def schedule(problem: Problem):
         partial=ParetoFrontier(dominates=lambda curr, other: curr.dominates(other)),
     )
 
-    initial_events = set()
+    initial_events = Events()
     for core in problem.hardware.cores:
-        initial_events.add(EventFreeCore(core))
+        initial_events.add_free_core(core)
     for channel in problem.hardware.channels:
-        initial_events.add(EventFreeChannel(channel))
+        initial_events.add_free_channel(channel)
     for value, mem in problem.placement_inputs.items():
-        initial_events.add(EventValueAvailable(mem, value))
+        initial_events.add_value_available_in(value, mem)
 
     recurse(problem, frontiers, state, events=initial_events, skipped_actions=[])
 
@@ -343,7 +341,7 @@ class RecurseState:
         self.active_reads.setdefault(key, 0)
         self.active_reads[key] += 1
 
-    def active_read_drop(self, mem: Memory, value: OperationNode, events: Set[Event]):
+    def active_read_drop(self, mem: Memory, value: OperationNode, events: 'Events'):
         assert isinstance(mem, Memory) and isinstance(value, OperationNode)
         key = (value, mem)
         assert key in self.active_reads
@@ -355,7 +353,7 @@ class RecurseState:
 
         if count == 0:
             self.active_reads.pop(key)
-            events.add(EventReadReleased(mem, value))
+            events.add_release_read(value, mem)
 
     def do_action_full(self, action: Action):
         assert action.time_start == self.curr_time
@@ -373,7 +371,7 @@ class RecurseState:
 
         self.actions_taken.append(action)
 
-    def do_wait_action_full(self, action: Action) -> Set[Event]:
+    def do_wait_action_full(self, action: Action) -> 'Events':
         assert isinstance(action, ActionWait)
 
         assert action.time_start == self.curr_time
@@ -382,7 +380,7 @@ class RecurseState:
         self.minimum_time = max(self.minimum_time, action.time_end)
         self.curr_energy += action.energy
 
-        events = set()
+        events = Events()
 
         for core, core_action in self.core_state.items():
             if core_action is None or core_action.time_end > self.curr_time:
@@ -393,14 +391,14 @@ class RecurseState:
 
             assert self.memory_contents[mem_out][node] is not None
             self.memory_contents[mem_out][node] = None
-            events.add(EventValueAvailable(mem_out, node))
+            events.add_value_available_in(node, mem_out)
 
             for value_input, mem_input in zip_eq(node.inputs, core_action.alloc.input_memories):
                 self.value_remaining_unstarted_uses[value_input] -= 1
                 self.active_read_drop(mem_input, value_input, events)
 
             self.core_state[core] = None
-            events.add(EventFreeCore(core))
+            events.add_free_core(core)
 
         for channel, channel_action in self.channel_state.items():
             if channel_action is None or channel_action.time_end > self.curr_time:
@@ -408,12 +406,12 @@ class RecurseState:
 
             assert self.memory_contents[channel_action.mem_dest][channel_action.value] is not None
             self.memory_contents[channel_action.mem_dest][channel_action.value] = None
-            events.add(EventValueAvailable(channel_action.mem_dest, channel_action.value))
+            events.add_value_available_in(channel_action.value, channel_action.mem_dest)
 
             self.active_read_drop(channel_action.mem_source, channel_action.value, events)
 
             self.channel_state[channel] = None
-            events.add(EventFreeChannel(channel))
+            events.add_free_channel(channel)
 
         self.actions_taken.append(action)
         return events
@@ -449,6 +447,91 @@ class RecurseState:
         assert False, "TODO"
 
 
+# TODO maybe merge this into state?
+class Events:
+    def __init__(self):
+        self.trigger_free_core: Set[Core] = set()
+        self.trigger_free_channel: Set[Channel] = set()
+        self.trigger_value_available: Set[Tuple[OperationNode, Memory]] = set()
+        self.trigger_read_released: Set[Tuple[OperationNode, Memory]] = set()
+        self.trigger_space_increased: Dict[Memory, Tuple[int, int]] = {}
+
+        self.triggered = None
+        self.state: Optional[RecurseState] = None
+
+    def clone(self) -> 'Events':
+        clone = Events()
+        clone.trigger_free_core = self.trigger_free_core.copy()
+        clone.trigger_free_channel = self.trigger_free_channel.copy()
+        clone.trigger_value_available = self.trigger_value_available.copy()
+        clone.trigger_read_released = self.trigger_read_released.copy()
+        clone.trigger_space_increased = self.trigger_space_increased.copy()
+        return clone
+
+    def add_free_core(self, core: Core):
+        self.trigger_free_core.add(core)
+
+    def add_free_channel(self, channel: Channel):
+        self.trigger_free_channel.add(channel)
+
+    def add_value_available_in(self, value: OperationNode, mem: Memory):
+        self.trigger_value_available.add((value, mem))
+
+    def add_release_read(self, value: OperationNode, mem: Memory):
+        self.trigger_read_released.add((value, mem))
+
+    def add_increase_memory_space(self, mem: Memory, bits_used_before: int, bits_used_after: int):
+        assert mem not in self.trigger_space_increased, "Can only increase memory space once per memory."
+        assert bits_used_after < bits_used_before
+
+        self.trigger_space_increased[mem] = (bits_used_before, bits_used_after)
+
+    def record_triggers(self, state: RecurseState):
+        self.triggered = False
+        self.state = state
+
+    def was_triggered(self) -> bool:
+        assert self.triggered is not None
+        triggered = self.triggered
+        self.triggered = None
+        self.state = None
+        return triggered
+
+    def _mark_trigger(self, trigger: bool):
+        self.triggered = self.triggered or trigger
+
+    def check_free_core(self, core: Core) -> bool:
+        self._mark_trigger(core in self.trigger_free_core)
+        return self.state.core_state[core] is None
+
+    def check_free_channel(self, channel: Channel) -> bool:
+        self._mark_trigger(channel in self.trigger_free_channel)
+        return self.state.channel_state[channel] is None
+
+    def check_value_available(self, value: OperationNode, mem: Memory) -> bool:
+        self._mark_trigger((value, mem) in self.trigger_value_available)
+        return value in self.state.memory_contents[mem] and self.state.memory_contents[mem][value] is None
+
+    def check_read_released(self, value: OperationNode, mem: Memory) -> bool:
+        # TODO does this function have convenient semantics for value dropping?
+        self._mark_trigger((value, mem) in self.trigger_read_released)
+        return self.state.active_reads[(value, mem)] == 0
+
+    def check_space_available(self, mem: Memory, bits: int) -> bool:
+        # inf memory is always available and never triggers
+        if mem.size_bits is None:
+            return True
+
+        bits_used_now = self.state.mem_space_used(mem)
+        fits = bits_used_now + bits <= mem.size_bits
+
+        if mem in self.trigger_space_increased:
+            bits_used_before, _ = self.trigger_space_increased[mem]
+            self._mark_trigger(fits and mem.size_bits < bits_used_before + bits)
+
+        return fits
+
+
 # TODO find a working solution first to avoid copying stuff around forever without making any progress?
 # TODO have a separate frontier for only energy and latency for fully finished schedules?
 
@@ -469,7 +552,7 @@ class RecurseState:
 # TODO debug why we never visit non-redundant copy solution?
 def recurse(
         problem: Problem, frontiers: Frontiers, state: RecurseState,
-        events: Set[Event], skipped_actions: List[Action]
+        events: Events, skipped_actions: List[Action]
 ):
     # global prev
     # now = time.perf_counter()
@@ -495,16 +578,14 @@ def recurse(
     # state.print(problem)
     # print("Current time/energy:", state.curr_time, state.curr_energy)
 
-    hardware = problem.hardware
-    graph = problem.graph
-
     state.assert_valid()
 
     # defensive copy
     # TODO replace skipped_actions with action comparison to the last skipped action?
     # TODO or a bigger reorg: have a separate recursion function for action starting
+    # TODO is this events clone really necessary?
     skipped_actions = list(skipped_actions)
-    events = set(events)
+    events = events.clone()
 
     # TODO remove this once the real one works properly
     #   (and is used even for non-wait states)
@@ -544,16 +625,18 @@ def recurse(
     log_state(state, is_better=False)
 
     # drop dead values from all memories
-    mem_occupancy_before = {mem: state.mem_space_used(mem) for mem in hardware.memories}
     for mem, nodes_dict in state.memory_contents.items():
         dead_values = set()
         for node, time_ready in nodes_dict.items():
             # TODO dead values should never even be started, add an assert for this
             if time_ready is None and state.value_remaining_unstarted_uses[node] == 0:
                 dead_values.add(node)
+        used_before = state.mem_space_used(mem)
         for v in dead_values:
             nodes_dict.pop(v, None)
-            events.add(EventMemorySpaceIncreased(mem))
+        used_after = state.mem_space_used(mem)
+        if used_after != used_before:
+            events.add_increase_memory_space(mem, used_before, used_after)
 
     # TODO action: drop value from core
     #    add a bunch of conditions to this to ensure we don't get stuck looping forever
@@ -574,132 +657,94 @@ def recurse(
     # start core operations
     for node in state.unstarted_nodes:
         for alloc in problem.possible_allocations[node]:
+            events.record_triggers(state)
+
             # check if core is free
-            core = alloc.core
-            if state.core_state[core] is not None:
+            if not events.check_free_core(alloc.core):
                 continue
 
             # check if the output memory has space
-            if node.size_bits + state.mem_space_used(alloc.output_memory) > alloc.output_memory.size_bits:
+            if not events.check_space_available(alloc.output_memory, node.size_bits):
                 continue
 
             # check if inputs are available in the right memories
-            inputs_available = True
-            for index_input, mem_input in enumerate(alloc.input_memories):
-                input = node.inputs[index_input]
-                if input not in state.memory_contents[mem_input] or state.memory_contents[mem_input][input] is not None:
-                    inputs_available = False
-                    break
-            if not inputs_available:
+            if not all(events.check_value_available(v, m) for v, m in zip_eq(node.inputs, alloc.input_memories)):
                 continue
 
+            # final trigger and skip checks
+            if not events.was_triggered():
+                continue
+            # TODO move to the front?
             action_core = ActionCore(time_start=state.curr_time, node=node, alloc=alloc)
-
             if action_core in skipped_actions:
                 continue
-            if not action_triggered_by_event(action_core, events, mem_occupancy_before):
-                continue
 
+            # potentially run action
             next_state = state.clone_do_action(action_core)
             recurse(problem, frontiers, next_state, events, skipped_actions)
             skipped_actions.append(action_core)
 
     # start transfers
-    for channel in hardware.channels:
+    for channel in problem.hardware.channels:
+        events.record_triggers(state)
+
         # check that channel is free
-        if state.channel_state[channel] is not None:
+        if not events.check_free_channel(channel):
             continue
 
         if channel.dir_a_to_b:
             recurse_channel_actions(
-                problem, frontiers, state, events, skipped_actions, mem_occupancy_before,
+                problem, frontiers, state, events, skipped_actions,
                 channel, channel.memory_a, channel.memory_b
             )
         if channel.dir_b_to_a:
             recurse_channel_actions(
-                problem, frontiers, state, events, skipped_actions, mem_occupancy_before,
+                problem, frontiers, state, events, skipped_actions,
                 channel, channel.memory_b, channel.memory_a
             )
 
 
 def recurse_channel_actions(
-        problem: Problem, frontiers: Frontiers, state: RecurseState, events: Set[Event], skipped_actions: List[Action],
-        mem_occupancy_before: Dict[Memory, int],
+        problem: Problem, frontiers: Frontiers, state: RecurseState, events: Events, skipped_actions: List[Action],
         channel: Channel, source: Memory, dest: Memory,
 ):
     assert state.channel_state[channel] is None
-    for value, time_available in state.memory_contents[source].items():
-        # check if the source value is done
-        if time_available is not None:
-            continue
+    for value in state.memory_contents[source]:
+        events.record_triggers(state)
 
-        # check if the value is still alive
+        # check if the value is still alive, no point in copying dead values around
         if state.value_remaining_unstarted_uses[value] == 0:
             continue
-
         # check if the value is already (going to be in) the target memory
         # TODO what if we're faster/cheaper? if everything is right another attempt will catch that
+        # TODO should this count as an event too? "the value has recently been dropped"
         if value in state.memory_contents[dest]:
             continue
 
-        # check if the value can fit in the target memory
-        if dest.size_bits is not None:
-            if value.size_bits + state.mem_space_used(dest) > dest.size_bits:
-                continue
+        # check if the source value is done
+        if not events.check_value_available(value, source):
+            continue
 
-        # run action
+        # check if the value can fit in the target memory
+        if not events.check_space_available(dest, value.size_bits):
+            continue
+
+        # final trigger and skip checks
+        if not events.was_triggered():
+            continue
+        # TODO move to the front?
         action_channel = ActionChannel(
             time_start=state.curr_time,
             channel=channel, mem_source=source, mem_dest=dest,
             value=value
         )
-
         if action_channel in skipped_actions:
             continue
-        if not action_triggered_by_event(action_channel, events, mem_occupancy_before):
-            continue
 
+        # potentially run action
         next_state = state.clone_do_action(action_channel)
         recurse(problem, frontiers, next_state, events, skipped_actions)
         skipped_actions.append(action_channel)
-
-
-def action_triggered_by_event(action: Action, events: Set[Event], mem_occupancy_before: Dict[Memory, int]) -> bool:
-    # TODO generate actions from events, instead of listing all possible actions and then filtering
-    # TODO it's annoying to keep this in sync with the action generation conditions,
-    #    is there a nice way to do both at once?
-
-    if isinstance(action, ActionCore):
-        # check if core is free
-        if EventFreeCore(action.alloc.core) in events:
-            return True
-        # check if the output memory has space
-        if EventMemorySpaceIncreased(action.alloc.output_memory) in events:
-            # (and that there wasn't enough space before)
-            if ((action.node.size_bits + mem_occupancy_before[action.alloc.output_memory]
-                 > action.alloc.output_memory.size_bits)):
-                return True
-        # check if inputs are available in the right memories
-        for index_input, mem_input in enumerate(action.alloc.input_memories):
-            if EventValueAvailable(mem_input, action.node.inputs[index_input]) in events:
-                return True
-    elif isinstance(action, ActionChannel):
-        if EventFreeChannel(action.channel) in events:
-            return True
-        # check if the source value is done
-        if EventValueAvailable(action.mem_source, action.value) in events:
-            return True
-        # check if the value is already in the target memory
-        # TODO what to do about this? this ties into not dropping unused values
-
-        # check if the value can fit in the target memory
-        if EventMemorySpaceIncreased(action.mem_dest) in events:
-            if action.value.size_bits + mem_occupancy_before[action.mem_dest] > action.mem_dest.size_bits:
-                return True
-    else:
-        assert False, f"unexpected action type: {action}"
-
-    return False
 
 
 next_plot_index = 0
