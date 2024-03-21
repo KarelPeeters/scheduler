@@ -14,8 +14,9 @@ class ParetoFrontier(Generic[T]):
 
         # TODO figure out optimal cache size
         self.frontier_cache: pylru.lrucache = pylru.lrucache(256)
+        self.frontier_hits = 0
         self.cache_hits = 0
-        self.cache_attempts = 0
+        self.add_attempts = 0
 
         self.dominates = dominates
 
@@ -40,12 +41,12 @@ class ParetoFrontier(Generic[T]):
         # TODO multiple layers of caches of increasing size that each get the spillover from the next one?
         #   or is that equivalent to just iterating over a single frontier in-order of recency?
         #   think about memory locality!
-        if self.cache_attempts != 0 and self.cache_attempts % 1000 == 0:
-            print(f"Cache hit rate: {self.cache_hits / self.cache_attempts}")
+        if self.add_attempts != 0 and self.add_attempts % 1000 == 0:
+            print(f"Cache hit rate: {self.cache_hits / self.add_attempts}, frontier hit rate: {self.frontier_hits / self.add_attempts}")
             self.cache_hits = 0
-            self.cache_attempts = 0
+            self.add_attempts = 0
 
-        self.cache_attempts += 1
+        self.add_attempts += 1
         for old in self.frontier_cache.keys():
             if self.dominates(old, new):
                 # re-insert to keep alive
@@ -56,11 +57,13 @@ class ParetoFrontier(Generic[T]):
         to_remove = set()
         for old in self.frontier:
             if self.dominates(old, new):
-                # add to cache
-                self.frontier_cache[old] = None
-
                 # TODO delay return for even more error checking
                 assert not to_remove, "Transitive property of dominance violated"
+
+                # add to cache
+                self.frontier_cache[old] = None
+                self.frontier_hits += 1
+
                 return False
             if self.dominates(new, old):
                 to_remove.add(old)
