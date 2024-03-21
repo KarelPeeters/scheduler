@@ -39,6 +39,7 @@
   * Mark earlier availability of values better?
 * Post-pruning: prune useless operations once we reach a done state, immediately setting better bounds.
   * We can prune even earlier, eg. as soon as a value is dead we can prune all copies of it that haven't been used.
+* Try shuffling the order of actions instead of picking some potentially worst case fixed ordering.
 
 # Low level optimizations
 

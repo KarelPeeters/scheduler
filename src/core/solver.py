@@ -1,3 +1,4 @@
+import itertools
 import math
 import os
 import shutil
@@ -252,10 +253,13 @@ class RecurseState:
             return False
 
         # value in memory availability
-        # TODO early exit eg. if both are dead
-        # TODO is just checking all these values already enough for dominance?
-        for value in self.problem.graph.nodes:
-            for mem in self.problem.hardware.memories:
+        for mem in self.memory_contents:
+            for value in self.memory_contents[mem]:
+                if check_minimize(self.value_dom_key_min(value, mem), other.value_dom_key_min(value, mem)):
+                    return False
+        # TODO is it useful to skip duplicates in this second loop?
+        for mem in other.memory_contents:
+            for value in other.memory_contents[mem]:
                 if check_minimize(self.value_dom_key_min(value, mem), other.value_dom_key_min(value, mem)):
                     return False
 
