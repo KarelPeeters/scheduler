@@ -1,6 +1,7 @@
 from typing import TypeVar, Generic, Callable, Set, Tuple
 
 import matplotlib.pyplot as plt
+import pylru
 
 T = TypeVar("T")
 
@@ -10,6 +11,12 @@ class ParetoFrontier(Generic[T]):
 
     def __init__(self, dominates: Callable[[T, T], bool]):
         self.frontier: Set[T] = set()
+
+        # TODO figure out optimal cache size
+        self.frontier_cache: pylru.lrucache = pylru.lrucache(256)
+        self.cache_hits = 0
+        self.cache_attempts = 0
+
         self.dominates = dominates
 
         # TODO remove
@@ -27,11 +34,31 @@ class ParetoFrontier(Generic[T]):
 
         if not self.frontier:
             self.frontier.add(new)
+            self.frontier_cache[new] = None
             return True
+
+        # TODO multiple layers of caches of increasing size that each get the spillover from the next one?
+        #   or is that equivalent to just iterating over a single frontier in-order of recency?
+        #   think about memory locality!
+        if self.cache_attempts != 0 and self.cache_attempts % 1000 == 0:
+            print(f"Cache hit rate: {self.cache_hits / self.cache_attempts}")
+            self.cache_hits = 0
+            self.cache_attempts = 0
+
+        self.cache_attempts += 1
+        for old in self.frontier_cache.keys():
+            if self.dominates(old, new):
+                # re-insert to keep alive
+                self.cache_hits += 1
+                self.frontier_cache[new] = None
+                return False
 
         to_remove = set()
         for old in self.frontier:
             if self.dominates(old, new):
+                # add to cache
+                self.frontier_cache[old] = None
+
                 # TODO delay return for even more error checking
                 assert not to_remove, "Transitive property of dominance violated"
                 return False
@@ -40,8 +67,13 @@ class ParetoFrontier(Generic[T]):
 
         for old in to_remove:
             self.frontier.remove(old)
+            # TODO is dropping old values useful?
+            if old in self.frontier_cache:
+                del self.frontier_cache[old]
 
         self.frontier.add(new)
+        # TODO is adding new items immediately useful?
+        self.frontier_cache[new] = None
         return True
 
     # TODO better name

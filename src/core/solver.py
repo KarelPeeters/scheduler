@@ -624,6 +624,9 @@ def recurse(
 
     log_state(state, is_better=False)
 
+    if next_plot_index % 1000 == 0:
+        print(f"Frontier sizes: done={len(frontiers.done)}, partial={len(frontiers.partial)}")
+
     # drop dead values from all memories
     for mem, nodes_dict in state.memory_contents.items():
         dead_values = set()
