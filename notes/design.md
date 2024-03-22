@@ -22,6 +22,9 @@
 
 # High level optimizations
 
+* Check for _graph automorphisms_ during dominance check.
+  * Precompute them for both the HW and NN in advance, then hopefully it's cheap enough to evaluate.
+  * Also look into _graph canonization_, maybe that's even better. 
 * Try doing *nothing* first, certainly for channel operations and maybe even for core ops.
   * =immediately blacklist
 * Add cuts (refuse to take branch if some condition is false)
@@ -52,6 +55,7 @@
 
 * Constraint groups that prevent multiple object from running at the same time.
   Can be used to simulate a bunch of architectural features:
+    * We can get rid of channel directionality.
     * A core and channel that share the same memory port.
     * Multiple channels that form a single interconnect where both can't be active at the same time.
     * IMA core weight loading? The core running can block access to the dedicated RAM block.
@@ -61,3 +65,6 @@
   * Would allow expressing peak power limitation, anything else?
 
 * Allow recomputation of dropped values?
+
+* Allow cyclic requirement: certain values must be _somewhere_, but allocation is free to choose where.
+* Also allow multiple inputs and outputs places for a single value.
