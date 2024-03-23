@@ -231,8 +231,8 @@ class RecurseState:
         #     waiting, burning energy, dropping values, ...
 
         # TODO do we even need to assert this?
-        assert isinstance(self.actions_taken[-1], ActionWait)
-        assert isinstance(other.actions_taken[-1], ActionWait)
+        # assert isinstance(self.actions_taken[-1], ActionWait)
+        # assert isinstance(other.actions_taken[-1], ActionWait)
 
         # better in any way
         compare_better = False
@@ -610,9 +610,9 @@ def recurse(
 
     # TODO double check the pareto logic, why can we only do this after a wait?
     # TODO re-enable this
-    if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
-        if not frontiers.partial.add(state):
-            return
+    # if len(state.actions_taken) and isinstance(state.actions_taken[-1], ActionWait):
+    if not frontiers.partial.add(state):
+        return
 
     if state.is_done():
         # TODO cancel all still-running channel transfers and subtract their energy again?
