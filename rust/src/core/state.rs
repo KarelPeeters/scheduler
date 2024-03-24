@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::{enumerate, Itertools, zip_eq};
 
-use crate::core::frontier::{DomDir, Dominance};
+use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::problem::{Allocation, Channel, Core, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait};
+use crate::dom_early_check;
 use crate::util::mini::{IterFloatExt, min_f64};
 
 #[derive(Clone)]
@@ -34,7 +35,6 @@ pub struct State {
     pub trigger_mem_usage_decreased: Vec<(u64, u64)>,
 
     // filtering
-    pub tried_wait: bool,
     pub tried_allocs: HashSet<Allocation>,
     pub tried_transfers: HashSet<(Channel, Node, bool)>,
 }
@@ -105,15 +105,12 @@ impl State {
             trigger_value_mem_available: vec![vec![false; mem_count]; node_count],
             trigger_value_mem_unlocked: vec![vec![false; mem_count]; node_count],
             trigger_mem_usage_decreased: vec![],
-            tried_wait: true,
             tried_allocs: HashSet::new(),
             tried_transfers: HashSet::new(),
         }
     }
 
     pub fn assert_valid(&self, problem: &Problem) {
-        println!("Checking program validness");
-
         // aliases
         let graph = &problem.graph;
         let hardware = &problem.hardware;
@@ -128,7 +125,6 @@ impl State {
 
         for state in &self.state_channel {
             if let Some(state) = state {
-                println!("{:?}", state);
                 let channel_info = &problem.hardware.channel_info[state.channel.0];
                 let (mem_source, mem_dest) = match state.dir_a_to_b {
                     true => (channel_info.mem_a, channel_info.mem_b),
@@ -142,7 +138,6 @@ impl State {
 
         for state in &self.state_core {
             if let Some(state) = state {
-                println!("{:?}", state);
                 let alloc = &problem.allocation_info[state.alloc.0];
                 for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
                     *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
@@ -159,7 +154,7 @@ impl State {
                 match node_actual {
                     ValueAvailability::AvailableNow { read_lock_count } => {
                         assert_eq!(expected.get(node).copied().unwrap_or(0), read_lock_count)
-                    },
+                    }
                     ValueAvailability::AvailableAtTime(_) => assert!(!expected.contains_key(node)),
                 }
             }
@@ -192,8 +187,13 @@ impl State {
         }
     }
 
+    // TODO use this function in a bunch more places
+    pub fn value_mem_availability(&self, value: Node, mem: Memory) -> Option<ValueAvailability> {
+        self.state_memory_node[mem.0].get(&value).copied()
+    }
+
     pub fn value_available_in_mem_now(&self, value: Node, mem: Memory) -> bool {
-        match self.state_memory_node[mem.0].get(&value) {
+        match self.value_mem_availability(value, mem) {
             Some(ValueAvailability::AvailableNow { .. }) => true,
             Some(ValueAvailability::AvailableAtTime(_)) => false,
             None => false,
@@ -260,13 +260,16 @@ impl State {
         next
     }
 
-    pub fn clear_triggers(&mut self) {
+    pub fn clear_triggers_and_tried(&mut self) {
         self.trigger_everything = false;
         self.trigger_core_free.iter_mut().for_each(|x| *x = false);
         self.trigger_channel_free.iter_mut().for_each(|x| *x = false);
         self.trigger_value_mem_available.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
         self.trigger_value_mem_unlocked.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
         self.trigger_mem_usage_decreased.clear();
+
+        self.tried_allocs.clear();
+        self.tried_transfers.clear();
     }
 
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
@@ -275,8 +278,7 @@ impl State {
         match availability {
             ValueAvailability::AvailableNow { read_lock_count } => {
                 *read_lock_count += 1;
-                println!("added read lock for value {:?} in memory {:?}, count {}", value, mem, *read_lock_count);
-            },
+            }
             ValueAvailability::AvailableAtTime(_) => panic!(),
         }
     }
@@ -287,7 +289,6 @@ impl State {
             ValueAvailability::AvailableNow { read_lock_count } => {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
-                println!("released read lock for value {:?} in memory {:?}, count {}", value, mem, *read_lock_count);
                 if *read_lock_count == 0 {
                     self.trigger_value_mem_unlocked[value.0][mem.0] = true;
                 }
@@ -351,7 +352,9 @@ impl State {
         assert!(time_end <= self.minimum_time);
         self.curr_time = time_end;
         self.actions_taken.push(Action::Wait(ActionWait { time_start: self.curr_time, time_end }));
-        self.clear_triggers();
+
+        // TODO avoid cloning these in the first place!
+        self.clear_triggers_and_tried();
 
         // complete core operations
         for core_i in 0..self.state_core.len() {
@@ -385,7 +388,30 @@ impl State {
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) {
-        todo!()
+        let alloc_info = &problem.allocation_info[alloc.0];
+        let node_info = &problem.graph.node_info[alloc_info.node.0];
+
+        // metadata
+        let time_delta = alloc_info.time;
+        let energy_delta = alloc_info.energy;
+
+        let time_end =  self.curr_time + time_delta;
+        let action = ActionCore {
+            time_start: self.curr_time,
+            time_end,
+            alloc,
+        };
+
+        // real changes
+        assert!(self.unstarted_nodes.remove(&alloc_info.node));
+        for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
+            self.add_mem_value_read_lock(input_value, input_mem);
+        }
+        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueAvailability::AvailableAtTime(time_end));
+        self.claim_core(alloc_info.core, action);
+
+        // default
+        self.start_action_common(Action::Core(action), time_end, energy_delta);
     }
 
     pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node, dir_a_to_b: bool) {
@@ -419,6 +445,24 @@ impl State {
         self.actions_taken.push(action);
         self.minimum_time = f64::max(self.minimum_time, time_end);
         self.curr_energy += energy_delta;
+    }
+
+    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> impl PartialOrd {
+        if self.value_remaining_unstarted_uses[value.0] == 0 {
+            // dead, best possible case
+            return (0, 0.0);
+        }
+
+        match self.value_mem_availability(value, mem) {
+            // available now
+            Some(ValueAvailability::AvailableNow { .. }) => (1, 0.0),
+            // available later
+            // TODO subtract current time here?
+            Some(ValueAvailability::AvailableAtTime(time)) => (2, -time),
+            // not even scheduled, worst case
+            None => (3, 0.0),
+        }
+
     }
 }
 
@@ -479,6 +523,15 @@ impl Trigger<'_> {
     }
 
     #[must_use]
+    pub fn check_mem_value_not_available(&mut self, mem: Memory, value: Node) -> bool {
+        // TODO use drop trigger here
+        self.result(
+            !self.state.value_available_in_mem_now(value, mem),
+            false,
+        )
+    }
+
+    #[must_use]
     pub fn was_triggered(self) -> bool {
         assert!(self.valid);
         self.triggered
@@ -486,21 +539,75 @@ impl Trigger<'_> {
 }
 
 impl Dominance for State {
-    fn dominance(&self, other: &Self) -> DomDir {
-        todo!()
+    type Aux = Problem;
+
+    /// A state is better than another state if the second state can be reached from the first one
+    /// by only taking useless or harmful actions. The exhaustive list of these actions is:
+    /// * burn an arbitrary positive amount of energy
+    /// * waste an arbitrary positive amount of time
+    ///     * either right now (ie. increase curr_time)
+    ///     * or as a future promise (ie. increase min_time)
+    ///     * or as part of operations (ie. keep a core operation running for a bit longer then necessary)
+    /// * delete values from memories
+    /// * apply a problem automorphism (harmless)
+    fn dominance(&self, other: &Self, problem: &Problem) -> DomDir {
+        // TODO explicitly create the list of useless actions so this function can be double-checked?
+        // TODO relax: we could also take extra actions (eg. copy a value over) to reach dominance, but maybe
+        //   that's second-order stuff that should be kept in the search itself
+        // TODO double-check that this function is both correct and complete
+        //   look at examples of reject/accept state pairs!
+
+        let mut dom = DomBuilder::new(self, other);
+
+        // basics
+        // TODO use min_time here?
+        dom.minimize(|s| s.curr_time);
+        dom.minimize(|s| s.curr_energy);
+        dom_early_check!(dom);
+
+        // value availability
+        for mem in problem.hardware.memories() {
+            for value in problem.graph.nodes() {
+                dom.minimize(|s| s.value_mem_dom_key_min(value, mem));
+            }
+            dom_early_check!(dom);
+        }
+
+        // channel and core availability
+        for channel in problem.hardware.channels() {
+            dom.minimize(|s| {
+                match s.state_channel[channel.0] {
+                    None => f64::NEG_INFINITY,
+                    Some(action) => action.time_end,
+                }
+            });
+            dom_early_check!(dom);
+        }
+        for core in problem.hardware.cores() {
+            dom.minimize(|s| {
+                match s.state_core[core.0] {
+                    None => f64::NEG_INFINITY,
+                    Some(action) => action.time_end,
+                }
+            });
+            dom_early_check!(dom);
+        }
+
+        // TODO memory space?
+        // TODO times for locked values? (really this is again just memory space)
+        //    => combine both into a "future memory space" temporal sequence?
+
+        dom.finish()
     }
 }
 
 impl Dominance for Cost {
-    fn dominance(&self, other: &Self) -> DomDir {
-        if self.time == other.time && self.energy == other.energy {
-            DomDir::Equal
-        } else if self.time <= other.time && self.energy <= other.energy {
-            DomDir::Better
-        } else if self.time >= other.time && self.energy >= other.energy {
-            DomDir::Worse
-        } else {
-            DomDir::Incomparable
-        }
+    type Aux = ();
+    fn dominance(&self, other: &Self, _: &()) -> DomDir {
+        let mut dom = DomBuilder::new(self, other);
+        dom.minimize(|s| s.time);
+        dom.minimize(|s| s.energy);
+        dom_early_check!(dom);
+        dom.finish()
     }
 }

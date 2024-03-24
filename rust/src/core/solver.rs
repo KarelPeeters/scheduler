@@ -16,16 +16,22 @@ fn recurse(problem: &Problem, mut state: State, frontier_done: &mut Frontier<Cos
     state.assert_valid(problem);
 
     // bookkeeping
-    if !frontier_done.would_add(state.best_case_cost(problem)) {
+    if !frontier_done.would_add(state.best_case_cost(problem), &()) {
         return;
     }
-    if !frontier_partial.add(&state) {
+    if !frontier_partial.add(&state, problem) {
         return;
     }
 
     if state.is_done(problem) {
         assert_eq!(state.curr_time, state.minimum_time);
-        frontier_done.add(&state.current_cost());
+        let cost = state.current_cost();
+        let was_added = frontier_done.add(&cost, &());
+
+        if was_added {
+            println!("Found new frontier cost {:?}", cost);
+        }
+
         return;
     }
 
@@ -51,15 +57,9 @@ fn recurse(problem: &Problem, mut state: State, frontier_done: &mut Frontier<Cos
     }
 
     // wait for first operation to finish
-    if !state.tried_wait {
-        let first_done_time = state.first_done_time().unwrap();
-
-        // do wait
+    if let Some(first_done_time) = state.first_done_time() {
         let state_next = state.clone_and_then(|n| n.do_action_wait(problem, first_done_time));
         recurse(problem, state_next, frontier_done, frontier_partial);
-
-        // mark as tried
-        state.tried_wait = true;
     }
 
     // start core operations
@@ -110,8 +110,7 @@ fn recurse_try_alloc(problem: &Problem, state: &mut State, frontier_done: &mut F
     recurse(problem, state_next, frontier_done, frontier_partial);
 
     // mark as tried
-    let prev = state.tried_allocs.insert(alloc);
-    assert!(!prev);
+    assert!(state.tried_allocs.insert(alloc));
 }
 
 fn recurse_try_channel(problem: &Problem, state: &mut State, frontier_done: &mut Frontier<Cost>, frontier_partial: &mut Frontier<State>, channel: Channel) {
@@ -161,6 +160,9 @@ fn recurse_try_channel_transfer(problem: &Problem, state: &mut State, frontier_d
     if !trigger.check_mem_value_available(mem_source, value) {
         return;
     }
+    if !trigger.check_mem_value_not_available(mem_dest, value) {
+        return;
+    }
     if !trigger.check_mem_space_available(problem, mem_dest, value_info.size_bits) {
         return;
     }
@@ -173,6 +175,5 @@ fn recurse_try_channel_transfer(problem: &Problem, state: &mut State, frontier_d
     recurse(problem, state_next, frontier_done, frontier_partial);
 
     // mark as tried
-    let prev = state.tried_transfers.insert(tried_key);
-    assert!(!prev);
+    assert!(state.tried_transfers.insert(tried_key));
 }

@@ -93,7 +93,7 @@ fn build_problem() -> Problem {
                 id: format!("basic"),
                 core,
                 node,
-                input_memories: vec![mem_core[i]],
+                input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
                 output_memory: mem_core[i],
                 time: alloc_time,
                 energy: alloc_energy,

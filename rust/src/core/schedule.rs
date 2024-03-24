@@ -1,4 +1,4 @@
-use crate::core::problem::{Allocation, Channel, Hardware, Memory, Node};
+use crate::core::problem::{Allocation, Channel, Hardware, Node};
 
 #[derive(Debug)]
 pub struct Schedule {
@@ -36,6 +36,8 @@ pub struct ActionChannel {
 
 impl Schedule {
     fn to_svg(&self, hardware: Hardware) -> String {
+        // TODO include all metadata, including memory contents, usage, lock count, ...
+        //    for easy visual debugging
         todo!()
     }
 }

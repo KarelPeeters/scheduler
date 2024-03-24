@@ -122,6 +122,8 @@ impl Problem {
                 assert!(mem.0 < self.hardware.mem_info.len());
             }
             assert!(alloc.output_memory.0 < self.hardware.mem_info.len());
+
+            assert_eq!(alloc.input_memories.len(), self.graph.node_info[alloc.node.0].inputs.len());
         }
 
         assert_eq!(self.input_placements.len(), self.graph.inputs.len());
