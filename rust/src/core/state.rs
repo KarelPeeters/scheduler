@@ -41,8 +41,8 @@ pub struct State {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Cost {
-    time: f64,
-    energy: f64,
+    pub time: f64,
+    pub energy: f64,
 }
 
 #[derive(Clone, Copy)]

@@ -12,11 +12,11 @@ pub trait Dominance {
     fn dominance(&self, other: &Self, aux: &Self::Aux) -> DomDir;
 }
 
-pub struct Frontier<T> {
-    values: Vec<T>,
+pub struct Frontier<K, V> {
+    values: Vec<(K, V)>,
 }
 
-impl<T> Frontier<T> {
+impl<K, V> Frontier<K, V> {
     pub fn new() -> Self {
         Self { values: vec![] }
     }
@@ -26,9 +26,9 @@ impl<T> Frontier<T> {
     }
 }
 
-impl<T: Dominance> Frontier<T>  {
-    pub fn would_add(&self, new: T, aux: &T::Aux) -> bool {
-        for old in &self.values {
+impl<K: Dominance, V> Frontier<K, V>  {
+    pub fn would_add(&self, new: &K, aux: &K::Aux) -> bool {
+        for (old, _) in &self.values {
             match new.dominance(old, aux) {
                 // new is better, we should add it
                 DomDir::Better => return true,
@@ -44,13 +44,16 @@ impl<T: Dominance> Frontier<T>  {
     }
 }
 
-impl<T: Dominance + Clone> Frontier<T>  {
-    pub fn add(&mut self, new: &T, aux: &T::Aux) -> bool {
+impl<K: Dominance + Clone, V> Frontier<K, V>  {
+    // TODO cow or clarify in name that we might clone
+    // TODO clean this up, this signature is annoying, maybe change to (with #must_use)
+    //    if let Some(add) = self.prepare_add(new, aux) { add.finish(value) }
+    pub fn add(&mut self, new: &K, aux: &K::Aux, new_value: impl FnOnce() -> V) -> bool {
         let mut i = 0;
         let mut dropped_any_old = false;
 
         while i < self.values.len() {
-            let old = &self.values[i];
+            let (old, _) = &self.values[i];
             match new.dominance(old, aux) {
                 DomDir::Better => {
                     // new is better, drop the old one (and don't increment index)
@@ -70,7 +73,7 @@ impl<T: Dominance + Clone> Frontier<T>  {
         }
 
         // no old was better or equal, we should add new
-        self.values.push(new.clone());
+        self.values.push((new.clone(), new_value()));
         return true;
     }
 }

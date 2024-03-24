@@ -4,36 +4,66 @@ use crate::core::frontier::Frontier;
 use crate::core::problem::{Allocation, Channel, Direction, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueAvailability};
 
-pub fn solve(problem: &Problem) {
-    let state = State::new(problem);
+pub trait Reporter {
+    fn report_new_schedule(&mut self, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
+    fn report_new_state(&mut self, frontier: &Frontier<State, ()>, state: &State);
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct DummyReporter;
+
+impl Reporter for DummyReporter {
+    fn report_new_schedule(&mut self, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
+    fn report_new_state(&mut self, _: &Frontier<State, ()>, _: &State) {}
+}
+
+pub struct Context<'p, 'r, 'f, R: Reporter> {
+    problem: &'p Problem,
+    reporter: &'r mut R,
+    frontier_done: &'f mut Frontier<Cost, State>,
+    frontier_partial: &'f mut Frontier<State, ()>,
+}
+
+pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
     let mut frontier_done = Frontier::new();
-    let mut frontier = Frontier::new();
-    recurse(problem, state, &mut frontier_done, &mut frontier);
+    let mut frontier_partial = Frontier::new();
+
+    let mut ctx = Context {
+        problem,
+        reporter,
+        frontier_done: &mut frontier_done,
+        frontier_partial: &mut frontier_partial,
+    };
+
+    let state = State::new(problem);
+    recurse(&mut ctx, state);
 }
 
 // TODO split this up into smaller functions
-fn recurse(problem: &Problem, mut state: State, frontier_done: &mut Frontier<Cost>, frontier_partial: &mut Frontier<State>) {
+fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
+    let problem = ctx.problem;
     state.assert_valid(problem);
 
     // bookkeeping
-    if !frontier_done.would_add(state.best_case_cost(problem), &()) {
-        return;
-    }
-    if !frontier_partial.add(&state, problem) {
-        return;
-    }
-
     if state.is_done(problem) {
         assert_eq!(state.curr_time, state.minimum_time);
-        let cost = state.current_cost();
-        let was_added = frontier_done.add(&cost, &());
 
+        let cost = state.current_cost();
+        let was_added = ctx.frontier_done.add(&cost, &(), || state.clone());
         if was_added {
-            println!("Found new frontier cost {:?}", cost);
+            ctx.reporter.report_new_schedule(ctx.frontier_done, cost, &state);
         }
 
         return;
     }
+
+    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &()) {
+        return;
+    }
+    if !ctx.frontier_partial.add(&state, problem, || ()) {
+        return;
+    }
+    ctx.reporter.report_new_state(ctx.frontier_partial, &state);
 
     // drop dead values from memories
     // TODO only do this after wait?
@@ -59,21 +89,23 @@ fn recurse(problem: &Problem, mut state: State, frontier_done: &mut Frontier<Cos
     // wait for first operation to finish
     if let Some(first_done_time) = state.first_done_time() {
         let state_next = state.clone_and_then(|n| n.do_action_wait(problem, first_done_time));
-        recurse(problem, state_next, frontier_done, frontier_partial);
+        recurse(ctx, state_next);
     }
 
     // start core operations
     for alloc in problem.allocations() {
-        recurse_try_alloc(problem, &mut state, frontier_done, frontier_partial, alloc);
+        recurse_try_alloc(ctx, &mut state, alloc);
     }
 
     // start channel operations
     for channel in problem.hardware.channels() {
-        recurse_try_channel(problem, &mut state, frontier_done, frontier_partial, channel);
+        recurse_try_channel(ctx, &mut state, channel);
     }
 }
 
-fn recurse_try_alloc(problem: &Problem, state: &mut State, frontier_done: &mut Frontier<Cost>, frontier_partial: &mut Frontier<State>, alloc: Allocation) {
+fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc: Allocation) {
+    // aliases
+    let problem = ctx.problem;
     let alloc_info = &problem.allocation_info[alloc.0];
     let node = alloc_info.node;
     let node_info = &problem.graph.node_info[node.0];
@@ -107,13 +139,15 @@ fn recurse_try_alloc(problem: &Problem, state: &mut State, frontier_done: &mut F
 
     // do action
     let state_next = state.clone_and_then(|n| n.do_action_core(problem, alloc));
-    recurse(problem, state_next, frontier_done, frontier_partial);
+    recurse(ctx, state_next);
 
     // mark as tried
     assert!(state.tried_allocs.insert(alloc));
 }
 
-fn recurse_try_channel(problem: &Problem, state: &mut State, frontier_done: &mut Frontier<Cost>, frontier_partial: &mut Frontier<State>, channel: Channel) {
+fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel) {
+    // aliases
+    let problem = ctx.problem;
     let channel_info = &problem.hardware.channel_info[channel.0];
 
     // check that channel is actually free before going through the following loops
@@ -134,12 +168,14 @@ fn recurse_try_channel(problem: &Problem, state: &mut State, frontier_done: &mut
         // TODO avoid copy?
         let values = state.state_memory_node[mem_source.0].keys().copied().collect_vec();
         for value in values {
-            recurse_try_channel_transfer(problem, state, frontier_done, frontier_partial, channel, value, dir_a_to_b);
+            recurse_try_channel_transfer(ctx, state, channel, value, dir_a_to_b);
         }
     }
 }
 
-fn recurse_try_channel_transfer(problem: &Problem, state: &mut State, frontier_done: &mut Frontier<Cost>, frontier_partial: &mut Frontier<State>, channel: Channel, value: Node, dir_a_to_b: bool) {
+fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel, value: Node, dir_a_to_b: bool) {
+    // aliases
+    let problem = ctx.problem;
     let value_info = &problem.graph.node_info[value.0];
     let channel_info = &problem.hardware.channel_info[channel.0];
     let (mem_source, mem_dest) = channel_info.mem_source_dest(dir_a_to_b);
@@ -172,7 +208,7 @@ fn recurse_try_channel_transfer(problem: &Problem, state: &mut State, frontier_d
 
     // do action
     let state_next = state.clone_and_then(|n| n.do_action_channel(problem, channel, value, dir_a_to_b));
-    recurse(problem, state_next, frontier_done, frontier_partial);
+    recurse(ctx, state_next);
 
     // mark as tried
     assert!(state.tried_transfers.insert(tried_key));

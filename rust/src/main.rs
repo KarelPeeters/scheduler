@@ -1,7 +1,9 @@
 use itertools::{enumerate, Itertools};
 
+use rust::core::frontier::Frontier;
 use rust::core::problem::{AllocationInfo, ChannelInfo, CoreInfo, Direction, Graph, Hardware, MemoryInfo, NodeInfo, Problem};
-use rust::core::solver::solve;
+use rust::core::solver::{Reporter, solve};
+use rust::core::state::{Cost, State};
 
 fn main() {
     let problem = build_problem();
@@ -11,7 +13,19 @@ fn main() {
 
     problem.assert_valid();
 
-    solve(&problem);
+    solve(&problem, &mut CustomReporter);
+}
+
+struct CustomReporter;
+
+impl Reporter for CustomReporter {
+    fn report_new_schedule(&mut self, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
+        println!("New finished schedule: {:?}", cost)
+    }
+
+    fn report_new_state(&mut self, frontier: &Frontier<State, ()>, state: &State) {
+        // println!("New state");
+    }
 }
 
 fn build_problem() -> Problem {

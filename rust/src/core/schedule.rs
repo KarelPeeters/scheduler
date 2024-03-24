@@ -1,10 +1,5 @@
 use crate::core::problem::{Allocation, Channel, Hardware, Node};
 
-#[derive(Debug)]
-pub struct Schedule {
-    actions: Vec<Action>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
     Wait(ActionWait),
@@ -33,12 +28,3 @@ pub struct ActionChannel {
     pub dir_a_to_b: bool,
     pub value: Node,
 }
-
-impl Schedule {
-    fn to_svg(&self, hardware: Hardware) -> String {
-        // TODO include all metadata, including memory contents, usage, lock count, ...
-        //    for easy visual debugging
-        todo!()
-    }
-}
-
