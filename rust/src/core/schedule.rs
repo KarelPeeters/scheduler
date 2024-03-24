@@ -1,23 +1,37 @@
-use crate::core::problem::{Allocation, Channel, ChannelDir, Hardware, Node};
+use crate::core::problem::{Allocation, Channel, Hardware, Memory, Node};
 
 #[derive(Debug)]
 pub struct Schedule {
     actions: Vec<Action>,
 }
 
-#[derive(Debug)]
-pub struct Action {
-    time_start: f64,
-    time_end: f64,
-    energy: f64,
-    kind: ActionKind,
+#[derive(Debug, Clone, Copy)]
+pub enum Action {
+    Wait(ActionWait),
+    Core(ActionCore),
+    Channel(ActionChannel),
 }
 
-#[derive(Debug)]
-pub enum ActionKind {
-    Wait,
-    StartCore { alloc: Allocation },
-    StartChannel { channel: Channel, dir: ChannelDir, value: Node },
+#[derive(Debug, Clone, Copy)]
+pub struct ActionWait {
+    pub time_start: f64,
+    pub time_end: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ActionCore {
+    pub time_start: f64,
+    pub time_end: f64,
+    pub alloc: Allocation,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ActionChannel {
+    pub time_start: f64,
+    pub time_end: f64,
+    pub channel: Channel,
+    pub dir_a_to_b: bool,
+    pub value: Node,
 }
 
 impl Schedule {
@@ -25,3 +39,4 @@ impl Schedule {
         todo!()
     }
 }
+

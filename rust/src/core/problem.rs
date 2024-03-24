@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use itertools::{chain, Itertools};
+use std::ops::Range;
+use itertools::Itertools;
 
 use crate::util::graphviz::GraphViz;
 
@@ -10,14 +11,14 @@ pub struct Problem {
     pub hardware: Hardware,
     pub graph: Graph,
 
-    pub allocations: Vec<AllocationInfo>,
+    pub allocation_info: Vec<AllocationInfo>,
 
     pub input_placements: Vec<Memory>,
     pub output_placements: Vec<Memory>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Allocation(usize);
+pub struct Allocation(pub usize);
 
 #[derive(Debug)]
 pub struct AllocationInfo {
@@ -43,7 +44,7 @@ pub struct Graph {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Node(usize);
+pub struct Node(pub usize);
 
 #[derive(Debug)]
 pub struct NodeInfo {
@@ -62,13 +63,13 @@ pub struct Hardware {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Core(usize);
+pub struct Core(pub usize);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Channel(usize);
+pub struct Channel(pub usize);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Memory(usize);
+pub struct Memory(pub usize);
 
 #[derive(Debug)]
 pub struct CoreInfo {
@@ -96,7 +97,7 @@ pub enum Direction {
     Both,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ChannelDir {
     AtoB,
     BtoA,
@@ -114,8 +115,8 @@ impl Problem {
         self.hardware.assert_valid();
         self.graph.assert_valid();
 
-        for alloc in &self.allocations {
-            assert!(alloc.core.0 < self.hardware.core_info.len());
+        for alloc in &self.allocation_info {
+            assert!(alloc.core.0 < self.hardware.cores().len());
             assert!(alloc.node.0 < self.graph.node_info.len());
             for mem in &alloc.input_memories {
                 assert!(mem.0 < self.hardware.mem_info.len());
@@ -134,10 +135,14 @@ impl Problem {
         }
     }
 
-    pub fn core_connected_memories(&self) -> Vec<(HashSet<Memory>, HashSet<Memory>)> {
-        let mut result = vec![(HashSet::new(), HashSet::new()); self.hardware.core_info.len()];
+    pub fn allocations(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Allocation> {
+        (0..self.allocation_info.len()).map(Allocation)
+    }
 
-        for alloc in &self.allocations {
+    pub fn core_connected_memories(&self) -> Vec<(HashSet<Memory>, HashSet<Memory>)> {
+        let mut result = vec![(HashSet::new(), HashSet::new()); self.hardware.cores().len()];
+
+        for alloc in &self.allocation_info {
             let (inputs, outputs) = &mut result[alloc.core.0];
             inputs.extend(alloc.input_memories.iter().copied());
             outputs.insert(alloc.output_memory);
@@ -152,7 +157,7 @@ impl Graph {
         Self { id: id.into(), node_info: vec![], inputs: vec![], outputs: vec![] }
     }
 
-    pub fn nodes(&self) -> impl Iterator<Item=Node> {
+    pub fn nodes(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Node> {
         (0..self.node_info.len()).map(Node)
     }
 
@@ -217,6 +222,7 @@ impl Graph {
 
         assert_eq!(self.inputs.iter().unique().count(), self.inputs.len());
         for x in &self.inputs {
+            assert!(self.node_info[x.0].inputs.is_empty());
             assert!(x.0 < self.node_info.len());
         }
         assert_eq!(self.inputs.iter().unique().count(), self.inputs.len());
@@ -231,15 +237,15 @@ impl Hardware {
         Self { id: id.into(), mem_info: vec![], core_info: vec![], channel_info: vec![] }
     }
 
-    pub fn memories(&self) -> impl Iterator<Item=Memory> {
+    pub fn memories(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Memory> {
         (0..self.mem_info.len()).map(Memory)
     }
 
-    pub fn channels(&self) -> impl Iterator<Item=Channel> {
+    pub fn channels(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Channel> {
         (0..self.channel_info.len()).map(Channel)
     }
 
-    pub fn cores(&self) -> impl Iterator<Item=Core> {
+    pub fn cores(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Core> {
         (0..self.core_info.len()).map(Core)
     }
 
@@ -345,6 +351,33 @@ impl Hardware {
     pub fn assert_valid(&self) {
         for i in 0..self.channel_info.len() {
             self.assert_channel_valid(Channel(i));
+        }
+    }
+}
+
+impl ChannelInfo {
+    pub fn energy_to_transfer(&self, size_bits: u64) -> f64 {
+        self.energy_per_bit * size_bits as f64
+    }
+
+    pub fn time_to_transfer(&self, size_bits: u64) -> f64 {
+        self.latency + self.time_per_bit * size_bits as f64
+    }
+
+    pub fn mem_source_dest(&self, dir_a_to_b: bool) -> (Memory, Memory) {
+        match dir_a_to_b {
+            true => (self.mem_a, self.mem_b),
+            false => (self.mem_b, self.mem_a),
+        }
+    }
+}
+
+impl Direction {
+    pub fn to_pair(&self) -> (bool, bool) {
+        match self {
+            Direction::AtoB => (true, false),
+            Direction::BtoA => (false, true),
+            Direction::Both => (true, true),
         }
     }
 }

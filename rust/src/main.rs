@@ -1,6 +1,7 @@
 use itertools::{enumerate, Itertools};
 
 use rust::core::problem::{AllocationInfo, ChannelInfo, CoreInfo, Direction, Graph, Hardware, MemoryInfo, NodeInfo, Problem};
+use rust::core::solver::solve;
 
 fn main() {
     let problem = build_problem();
@@ -9,6 +10,8 @@ fn main() {
     problem.graph.to_graphviz().export("ignored/graph.svg").unwrap();
 
     problem.assert_valid();
+
+    solve(&problem);
 }
 
 fn build_problem() -> Problem {
@@ -106,7 +109,7 @@ fn build_problem() -> Problem {
         id: "problem".to_owned(),
         hardware,
         graph,
-        allocations,
+        allocation_info: allocations,
         input_placements,
         output_placements,
     }

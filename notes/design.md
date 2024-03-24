@@ -31,6 +31,7 @@
   * Don't allow more instances of a value to be alive (and not-used) then will be used in the future.
 * Add bounds (give up if we can't beat the current front)
   * Add conservative estimates to energy and timing to get higher bounds.
+    * Improve these: eg. for min time consider currently occupied cores and a real mini schedule.
 * Symmetry breaking:
     * Intrinsic in the formulation: multiple actions that start at the same time should
       _not_ be tried in different orders.
@@ -43,13 +44,21 @@
 * Post-pruning: prune useless operations once we reach a done state, immediately setting better bounds.
   * We can prune even earlier, eg. as soon as a value is dead we can prune all copies of it that haven't been used.
 * Try shuffling the order of actions instead of picking some potentially worst case fixed ordering.
+* Drop useless operations in done state to get tighter bound.
+  * ie. still-running and transfers that didn't get used
 
 # Low level optimizations
 
 * Early exit in dominance check
 * Optimize data structures
+  * Frontier cache (with a dynamically scaling size depending on hit rates?)
+  * For starting operations: immediatly iterate only over actions that have actually been triggered?
 * Support state undo actions
 * Rewrite in Rust
+  * Bitsets for sets where possible.
+* Merge both the done and partial frontier?
+  * This would probably involve integrating the estimates better?
+* Write all checks so condition checks fail as soon as possible.
 
 # Extra features
 

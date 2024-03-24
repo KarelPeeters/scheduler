@@ -398,6 +398,7 @@ class RecurseState:
             events.add_value_available_in(node, mem_out)
 
             for value_input, mem_input in zip_eq(node.inputs, core_action.alloc.input_memories):
+                # TODO probably a bug
                 self.value_remaining_unstarted_uses[value_input] -= 1
                 self.active_read_drop(mem_input, value_input, events)
 
