@@ -1,4 +1,4 @@
-use crate::core::problem::{Allocation, Channel, Hardware, Node};
+use crate::core::problem::{Allocation, Channel, Node};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {

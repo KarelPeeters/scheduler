@@ -1,7 +1,3 @@
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::Path;
-
 use itertools::{enumerate, Itertools};
 
 use rust::core::frontier::Frontier;
