@@ -405,6 +405,10 @@ impl State {
         // real changes
         assert!(self.unstarted_nodes.remove(&alloc_info.node));
         for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
+            let uses = &mut self.value_remaining_unstarted_uses[input_value.0];
+            assert!(*uses >= 1);
+            *uses -= 1;
+
             self.add_mem_value_read_lock(input_value, input_mem);
         }
         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueAvailability::AvailableAtTime(time_end));
@@ -468,9 +472,7 @@ impl State {
 impl Trigger<'_> {
     #[must_use]
     fn result(&mut self, valid: bool, trigger: bool) -> bool {
-        if trigger {
-            assert!(valid);
-        }
+        // we can't assert valid if triggered, here, the condition might have become false already
         self.triggered |= trigger;
         valid
     }

@@ -16,6 +16,7 @@ fn main() {
     let _ = std::fs::remove_dir_all("ignored/schedules/");
     std::fs::create_dir_all("ignored/schedules/done/").unwrap();
     std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
+    std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
 
     let mut reporter = CustomReporter::default();
 
@@ -24,20 +25,31 @@ fn main() {
 
 #[derive(Default)]
 struct CustomReporter {
-    svg_index: u64,
+    next_index: u64,
 }
 
 impl Reporter for CustomReporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
-        let index = self.svg_index;
-        self.svg_index += 1;
+        let index = self.next_index;
+        self.next_index += 1;
+
+        println!("New done schedule, index={}, cost={:?}, frontier_size={}", index, cost, frontier.len());
         state.write_svg_to_file(&problem, format!("ignored/schedules/done/{index}.svg")).unwrap();
+
+        // clear frontier dir
+        std::fs::remove_dir_all("ignored/schedules/frontier/").unwrap();
+        std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
+
+        // save entire frontier
+        for (i, (_, state)) in enumerate(frontier.iter()) {
+            state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
+        }
     }
 
     fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State) {
-        let index = self.svg_index;
-        self.svg_index += 1;
-        state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
+        // let index = self.next_index;
+        // self.next_index += 1;
+        // state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
     }
 }
 

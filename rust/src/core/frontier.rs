@@ -24,6 +24,10 @@ impl<K, V> Frontier<K, V> {
     pub fn len(&self) -> usize {
         self.values.len()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
+        self.values.iter()
+    }
 }
 
 impl<K: Dominance, V> Frontier<K, V>  {

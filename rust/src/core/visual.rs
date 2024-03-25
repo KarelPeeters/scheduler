@@ -22,6 +22,25 @@ impl State {
         // grey background
         writeln!(f, "<rect width='100%' height='100%' fill='lightgrey' />")?;
 
+        // bounding box
+        writeln!(
+            f,
+            "<rect x='{}%' y='{}' width='{}%' height='{}' fill='none' stroke='black' />",
+            100.0 * horizontal_padding_frac,
+            row_height,
+            100.0 * (1.0 - 2.0 * horizontal_padding_frac),
+            figure_height - 2.0 * row_height
+        )?;
+        // split between cores and channels
+        writeln!(
+            f,
+            "<line x1='{}%' y1='{}' x2='{}%' y2='{}' stroke='black' />",
+            100.0 * horizontal_padding_frac,
+            (problem.hardware.cores().len() as f64 + 1.0) * row_height,
+            100.0 * (1.0 - horizontal_padding_frac),
+            (problem.hardware.cores().len() as f64 + 1.0) * row_height
+        )?;
+
         // draw action rectangles
         let rect = |f: &mut F, row, t_min, t_max, color, text| {
             writeln!(
