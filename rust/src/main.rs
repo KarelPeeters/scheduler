@@ -1,3 +1,7 @@
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+
 use itertools::{enumerate, Itertools};
 
 use rust::core::frontier::Frontier;
@@ -13,18 +17,31 @@ fn main() {
 
     problem.assert_valid();
 
-    solve(&problem, &mut CustomReporter);
+    let _ = std::fs::remove_dir_all("ignored/schedules/");
+    std::fs::create_dir_all("ignored/schedules/done/").unwrap();
+    std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
+
+    let mut reporter = CustomReporter::default();
+
+    solve(&problem, &mut reporter);
 }
 
-struct CustomReporter;
+#[derive(Default)]
+struct CustomReporter {
+    svg_index: u64,
+}
 
 impl Reporter for CustomReporter {
-    fn report_new_schedule(&mut self, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
-        println!("New finished schedule: {:?}", cost)
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
+        let index = self.svg_index;
+        self.svg_index += 1;
+        state.write_svg_to_file(&problem, format!("ignored/schedules/done/{index}.svg")).unwrap();
     }
 
-    fn report_new_state(&mut self, frontier: &Frontier<State, ()>, state: &State) {
-        // println!("New state");
+    fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State) {
+        let index = self.svg_index;
+        self.svg_index += 1;
+        state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
     }
 }
 

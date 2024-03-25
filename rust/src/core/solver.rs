@@ -5,16 +5,16 @@ use crate::core::problem::{Allocation, Channel, Direction, Memory, Node, Problem
 use crate::core::state::{Cost, State, ValueAvailability};
 
 pub trait Reporter {
-    fn report_new_schedule(&mut self, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, frontier: &Frontier<State, ()>, state: &State);
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
-    fn report_new_schedule(&mut self, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Frontier<State, ()>, _: &State) {}
+    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &Frontier<State, ()>, _: &State) {}
 }
 
 pub struct Context<'p, 'r, 'f, R: Reporter> {
@@ -51,7 +51,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         let cost = state.current_cost();
         let was_added = ctx.frontier_done.add(&cost, &(), || state.clone());
         if was_added {
-            ctx.reporter.report_new_schedule(ctx.frontier_done, cost, &state);
+            ctx.reporter.report_new_schedule(problem, ctx.frontier_done, cost, &state);
         }
 
         return;
@@ -63,7 +63,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     if !ctx.frontier_partial.add(&state, problem, || ()) {
         return;
     }
-    ctx.reporter.report_new_state(ctx.frontier_partial, &state);
+    ctx.reporter.report_new_state(problem, ctx.frontier_partial, &state);
 
     // drop dead values from memories
     // TODO only do this after wait?
