@@ -77,3 +77,9 @@
 
 * Allow cyclic requirement: certain values must be _somewhere_, but allocation is free to choose where.
 * Also allow multiple inputs and outputs places for a single value.
+
+# Test cases
+* simple network
+* disastrous highly symmetric hardware and network
+* real networks!
+* tricky memory cases, eg. compute something, temporarily move it to a separate memory, drop it, then copy it back 

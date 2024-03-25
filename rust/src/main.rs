@@ -26,6 +26,7 @@ fn main() {
 #[derive(Default)]
 struct CustomReporter {
     next_index: u64,
+    state_counter: u64,
 }
 
 impl Reporter for CustomReporter {
@@ -47,9 +48,15 @@ impl Reporter for CustomReporter {
     }
 
     fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State) {
-        // let index = self.next_index;
-        // self.next_index += 1;
-        // state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
+        self.state_counter += 1;
+
+        if self.state_counter % 1_000 == 0 {
+            println!("New state, state_counter={}, frontier_len={}", self.state_counter, frontier.len());
+
+            let index = self.next_index;
+            self.next_index += 1;
+            state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
+        }
     }
 }
 
