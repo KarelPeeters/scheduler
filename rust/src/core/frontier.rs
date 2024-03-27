@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 // TODO better name for this type and the trait
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum DomDir {
@@ -12,31 +14,178 @@ pub trait Dominance {
     fn dominance(&self, other: &Self, aux: &Self::Aux) -> DomDir;
 }
 
+pub struct Entry<K, V> {
+    key: K,
+    value: V,
+    prev_index: Option<usize>,
+    next_index: Option<usize>,
+}
+
 pub struct Frontier<K, V> {
-    values: Vec<(K, V)>,
+    entries: Vec<Entry<K, V>>,
+    first_index: Option<usize>,
+    last_index: Option<usize>,
+    pub dominance_calculations: u64,
 }
 
 impl<K, V> Frontier<K, V> {
     pub fn new() -> Self {
-        Self { values: vec![] }
+        Self { entries: vec![], first_index: None, last_index: None, dominance_calculations: 0 }
     }
 
     pub fn len(&self) -> usize {
-        self.values.len()
+        self.entries.len()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
-        self.values.iter()
+    pub fn iter_arbitrary(&self) -> impl Iterator<Item=(&K, &V)> {
+        self.entries.iter().map(|e| (&e.key, &e.value))
+    }
+
+    pub fn iter_lru(&self) -> impl Iterator<Item=(&K, &V)> {
+        let mut next_index = self.first_index;
+        std::iter::from_fn(move || {
+            let index = next_index?;
+            let entry = &self.entries[index];
+            next_index = entry.next_index;
+            Some((&entry.key, &entry.value))
+        })
+    }
+
+    fn assert_valid(&self) {
+        let mut indices = HashSet::new();
+        let mut prev_index = None;
+        let mut next_index = self.first_index;
+        while let Some(index) = next_index {
+            indices.insert(index);
+
+            let entry = &self.entries[index];
+            assert_eq!(entry.prev_index, prev_index);
+
+            prev_index = Some(index);
+            next_index = entry.next_index;
+        }
+        assert_eq!(self.last_index, prev_index);
+        assert_eq!(indices.len(), self.entries.len());
+    }
+
+    fn add_entry(&mut self, key: K, value: V, front: bool) {
+        let new_index = self.entries.len();
+        self.entries.push(Entry {
+            key,
+            value,
+            prev_index: if front { None } else { self.last_index },
+            next_index: if front { self.first_index } else { None },
+        });
+
+        if front {
+            if let Some(first_index) = self.first_index {
+                let slot = &mut self.entries[first_index].prev_index;
+                debug_assert_eq!(*slot, None);
+                *slot = Some(new_index);
+            } else {
+                self.last_index = Some(new_index);
+            }
+            self.first_index = Some(new_index);
+        } else {
+            if let Some(last_index) = self.last_index {
+                let slot = &mut self.entries[last_index].next_index;
+                debug_assert_eq!(*slot, None);
+                *slot = Some(new_index);
+            } else {
+                self.first_index = Some(new_index);
+            }
+            self.last_index = Some(new_index)
+        }
+    }
+
+    fn remove(&mut self, index: usize) -> Entry<K, V> {
+        // remove entry from its chain
+        {
+            let entry = &mut self.entries[index];
+            let prev_index = entry.prev_index;
+            let next_index = entry.next_index;
+            if let Some(prev_index) = prev_index {
+                self.entries[prev_index].next_index = next_index
+            } else {
+                self.first_index = next_index;
+            }
+            if let Some(next_index) = next_index {
+                self.entries[next_index].prev_index = prev_index;
+            } else {
+                self.last_index = prev_index;
+            }
+        }
+
+        // remove entry from the vec
+        let mut entry = self.entries.swap_remove(index);
+        entry.prev_index = None;
+        entry.next_index = None;
+
+        // fix the moved (previously last in the vec) element
+        if let Some(moved_entry) = self.entries.get(index) {
+            let prev_index = moved_entry.prev_index;
+            let next_index = moved_entry.next_index;
+            if let Some(prev_index) = prev_index {
+                self.entries[prev_index].next_index = Some(index);
+            } else {
+                self.first_index = Some(index);
+            }
+            if let Some(next_index) = next_index {
+                self.entries[next_index].prev_index = Some(index);
+            } else {
+                self.last_index = Some(index);
+            }
+        }
+
+        entry
+    }
+
+    fn move_to_front(&mut self, index: usize) {
+        let entry = self.remove(index);
+        self.add_entry(entry.key, entry.value, true);
+    }
+
+    fn retain(&mut self, mut f: impl FnMut(&K, &V) -> RetainAction) {
+        let mut next_index = self.first_index;
+
+        while let Some(index) = next_index {
+            let entry = &self.entries[index];
+            let action = f(&entry.key, &entry.value);
+
+            next_index = match action {
+                RetainAction::ContinueKeep => {
+                    entry.next_index
+                }
+                RetainAction::ContinueRemove => {
+                    let normal_next = entry.next_index;
+                    self.remove(index);
+                    if normal_next == Some(self.entries.len()) {
+                        Some(index)
+                    } else {
+                        normal_next
+                    }
+                }
+                RetainAction::BreakMoveToFront => {
+                    self.move_to_front(index);
+                    break
+                }
+            };
+        }
+
+        if cfg!(debug_assertions) {
+            self.assert_valid();
+        }
     }
 }
 
 impl<K: Dominance, V> Frontier<K, V>  {
     pub fn would_add(&self, new: &K, aux: &K::Aux) -> bool {
-        for (old, _) in &self.values {
+        for (old, _) in self.iter_lru() {
             match new.dominance(old, aux) {
                 // new is better, we should add it
                 DomDir::Better => return true,
                 // old is better or equal, new is useless
+                // TODO move to front here as well?
                 DomDir::Worse | DomDir::Equal => return false,
                 // both are incomparable, keep looking
                 DomDir::Incomparable => {}
@@ -48,37 +197,61 @@ impl<K: Dominance, V> Frontier<K, V>  {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum RetainAction {
+    ContinueKeep,
+    ContinueRemove,
+    BreakMoveToFront,
+}
+
 impl<K: Dominance + Clone, V> Frontier<K, V>  {
     // TODO cow or clarify in name that we might clone
     // TODO clean this up, this signature is annoying, maybe change to (with #must_use)
     //    if let Some(add) = self.prepare_add(new, aux) { add.finish(value) }
     pub fn add(&mut self, new: &K, aux: &K::Aux, new_value: impl FnOnce() -> V) -> bool {
-        let mut i = 0;
-        let mut dropped_any_old = false;
+        if cfg!(debug_assertions) {
+            self.assert_valid();
+        }
 
-        while i < self.values.len() {
-            let (old, _) = &self.values[i];
+        let mut new_better_than_any_old = false;
+        let mut any_old_better_than_new = false;
+
+        let mut samples = 0;
+
+        self.retain(|old, _| {
+            samples += 1;
             match new.dominance(old, aux) {
                 DomDir::Better => {
-                    // new is better, drop the old one (and don't increment index)
-                    dropped_any_old = true;
-                    self.values.swap_remove(i);
+                    // new is better, drop old
+                    new_better_than_any_old = true;
+                    RetainAction::ContinueRemove
                 }
                 DomDir::Worse | DomDir::Equal => {
                     // old is better or equal, new is useless
-                    assert!(!dropped_any_old, "Transitive property of PartialOrd was not respected");
-                    return false;
+                    any_old_better_than_new = true;
+                    RetainAction::BreakMoveToFront
                 }
                 DomDir::Incomparable => {
                     // both are incomparable, keep looking
-                    i += 1;
+                    RetainAction::ContinueKeep
                 }
             }
-        }
+        });
 
-        // no old was better or equal, we should add new
-        self.values.push((new.clone(), new_value()));
-        return true;
+        // if any_old_better_than_new {
+        //     println!("hit: {}", samples as f32 / self.len() as f32);
+        // }
+        self.dominance_calculations += samples;
+
+        assert!(!(new_better_than_any_old && any_old_better_than_new), "Transitive property of PartialOrd was not respected");
+
+        if !any_old_better_than_new {
+            // no old was better or equal, we should add new
+            self.add_entry(new.clone(), new_value(), false);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -133,4 +306,93 @@ macro_rules! dom_early_check {
             return DomDir::Incomparable;
         }
     }}
+}
+
+#[cfg(test)]
+mod test {
+    use itertools::Itertools;
+    use rand::{Rng, SeedableRng};
+    use rand::rngs::SmallRng;
+
+    use crate::core::frontier::{Frontier, RetainAction};
+
+    // TODO fuzz testing
+    #[test]
+    fn basic() {
+        let mut frontier = Frontier::new();
+
+        frontier.add_entry(0, 0, true);
+        frontier.add_entry(1, 1, true);
+        frontier.add_entry(2, 2, true);
+        frontier.add_entry(3, 3, true);
+        frontier.add_entry(4, 4, true);
+        // frontier.remove(2);
+        frontier.move_to_front(2);
+        frontier.remove(2);
+        frontier.add_entry(5, 5, true);
+
+        println!("{:?}", frontier.iter_lru().collect_vec());
+    }
+
+    #[test]
+    fn fuzz_test() {
+        let mut frontier = Frontier::new();
+        let mut rng = SmallRng::seed_from_u64(0);
+
+        let max_size = 10;
+
+        for i in 0..1_000_000 {
+            if frontier.len() >= max_size {
+                // println!("removing");
+                frontier.remove(rng.gen_range(0..frontier.len()));
+                continue;
+            }
+            if frontier.len() == 0 {
+                // println!("adding");
+                frontier.add_entry(i, i, rng.gen());
+                continue;
+            }
+
+            match rng.gen_range(0..4) {
+                0 => {
+                    // println!("rand removing");
+                    frontier.remove(rng.gen_range(0..frontier.len()));
+                }
+                1 => {
+                    // println!("rand adding");
+                    frontier.add_entry(i, i, rng.gen());
+                }
+                2 => {
+                    // println!("rand changing");
+                    frontier.move_to_front(rng.gen_range(0..frontier.len()));
+                }
+                3 => {
+                    // randomly drop values
+                    let len_before = frontier.len();
+                    let mut any_break = false;
+                    let mut visit_count = 0;
+
+                    frontier.retain(|_, _| {
+                        visit_count += 1;
+                        match rng.gen_range(0..2) {
+                            0 => RetainAction::ContinueRemove,
+                            1 => RetainAction::ContinueKeep,
+                            2 => {
+                                any_break = true;
+                                RetainAction::BreakMoveToFront
+                            },
+                            _ => unreachable!(),
+                        }
+                    });
+
+                    if !any_break {
+                        assert_eq!(visit_count, len_before);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        println!("{}", frontier.len());
+    }
 }

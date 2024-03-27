@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 itertools = "0.12.0"
 ordered-float = "4.2.0"
-rand = "0.8.5"
+rand = { version = "0.8.5", features = ["small_rng"] }
 
 [profile.release]
 debug = true
