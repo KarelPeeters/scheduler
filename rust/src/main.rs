@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use itertools::{enumerate, Itertools};
 
 use rust::core::frontier::Frontier;
@@ -18,15 +20,19 @@ fn main() {
     std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
     std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
 
-    let mut reporter = CustomReporter::default();
+    let mut reporter = CustomReporter {
+        next_index: 0,
+        state_counter: 0,
+        start: Instant::now(),
+    };
 
     solve(&problem, &mut reporter);
 }
 
-#[derive(Default)]
 struct CustomReporter {
     next_index: u64,
     state_counter: u64,
+    start: Instant,
 }
 
 impl Reporter for CustomReporter {
@@ -51,7 +57,7 @@ impl Reporter for CustomReporter {
         self.state_counter += 1;
 
         if self.state_counter % 1_000 == 0 {
-            println!("New state, state_counter={}, frontier_len={}", self.state_counter, frontier.len());
+            println!("New state, state_counter={}, frontier_len={}, elapsed={:?}", self.state_counter, frontier.len(), self.start.elapsed());
 
             let index = self.next_index;
             self.next_index += 1;
@@ -62,7 +68,7 @@ impl Reporter for CustomReporter {
 
 fn build_problem() -> Problem {
     // parameters
-    let hardware_depth = 2;
+    let hardware_depth = 4;
     let mem_size_ext = None;
     let mem_size_chip = None;
     let bandwidth_ext = 1.0;
@@ -72,8 +78,8 @@ fn build_problem() -> Problem {
     let alloc_time = 4000.0;
     let alloc_energy = 100.0;
 
-    let graph_depth = 2;
-    let graph_branching = 3;
+    let graph_depth = 6;
+    let graph_branching = 4;
     let graph_node_size = 1000;
 
     // hardware
