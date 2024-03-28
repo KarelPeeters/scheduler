@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use itertools::{enumerate, zip_eq};
+use itertools::{chain, enumerate, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::problem::{Allocation, Channel, Core, Memory, Node, Problem};
@@ -566,14 +566,6 @@ impl Dominance for State {
         dom.minimize(|s| s.curr_energy);
         dom_early_check!(dom);
 
-        // value availability
-        for mem in problem.hardware.memories() {
-            for value in problem.graph.nodes() {
-                dom.minimize(|s| s.value_mem_dom_key_min(value, mem));
-            }
-            dom_early_check!(dom);
-        }
-
         // channel and core availability
         for channel in problem.hardware.channels() {
             dom.minimize(|s| {
@@ -592,6 +584,14 @@ impl Dominance for State {
                 }
             });
             dom_early_check!(dom);
+        }
+
+        // value availability
+        for mem in problem.hardware.memories() {
+            for &value in chain(self.state_memory_node[mem.0].keys(), other.state_memory_node[mem.0].keys()) {
+                dom.minimize(|s| s.value_mem_dom_key_min(value, mem));
+                dom_early_check!(dom);
+            }
         }
 
         // TODO memory space?
