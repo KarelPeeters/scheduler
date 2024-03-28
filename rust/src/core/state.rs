@@ -20,7 +20,7 @@ pub struct State {
 
     pub state_core: Vec<Option<ActionCore>>,
     pub state_channel: Vec<Option<ActionChannel>>,
-    pub state_memory_node: Vec<HashMap<Node, ValueAvailability>>,
+    pub state_memory_node: Vec<HashMap<Node, ValueState>>,
 
     pub unstarted_nodes: HashSet<Node>,
     pub value_remaining_unstarted_uses: Vec<u32>,
@@ -53,8 +53,13 @@ pub struct Trigger<'s> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ValueAvailability {
-    AvailableNow { read_lock_count: u64 },
+pub enum ValueState {
+    AvailableNow {
+        // the number of currently active readers
+        read_lock_count: u64,
+        // the number of reads that happened in total,
+        read_count: u64,
+    },
     AvailableAtTime(f64),
 }
 
@@ -84,7 +89,7 @@ impl State {
 
         let mut state_memory_node = vec![HashMap::new(); mem_count];
         for (&value, &mem) in zip_eq(&graph.inputs, &problem.input_placements) {
-            let prev = state_memory_node[mem.0].insert(value, ValueAvailability::AvailableNow { read_lock_count: 0 });
+            let prev = state_memory_node[mem.0].insert(value, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
             assert!(prev.is_none());
         }
 
@@ -132,7 +137,7 @@ impl State {
                 };
 
                 *expected_state_memory_read_lock_count[mem_source.0].entry(state.value).or_insert(0) += 1;
-                assert_eq!(self.state_memory_node[mem_dest.0].get(&state.value).unwrap(), &ValueAvailability::AvailableAtTime(state.time_end));
+                assert_eq!(self.state_memory_node[mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time_end));
             }
         }
 
@@ -142,7 +147,7 @@ impl State {
                 for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
                     *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
                 }
-                assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueAvailability::AvailableAtTime(state.time_end));
+                assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time_end));
             }
         }
 
@@ -152,15 +157,20 @@ impl State {
 
             for (node, &node_actual) in actual {
                 match node_actual {
-                    ValueAvailability::AvailableNow { read_lock_count } => {
+                    ValueState::AvailableNow { read_lock_count, read_count: _ } => {
                         assert_eq!(expected.get(node).copied().unwrap_or(0), read_lock_count)
                     }
-                    ValueAvailability::AvailableAtTime(_) => assert!(!expected.contains_key(node)),
+                    ValueState::AvailableAtTime(_) => assert!(!expected.contains_key(node)),
                 }
             }
 
-            for (node, &read_lock_count) in expected {
-                assert_eq!(actual.get(node).unwrap(), &ValueAvailability::AvailableNow { read_lock_count });
+            for (node, &expected_read_lock_count) in expected {
+                match actual.get(node).unwrap() {
+                    &ValueState::AvailableNow { read_count: _, read_lock_count  } => {
+                        assert_eq!(read_lock_count, expected_read_lock_count);
+                    }
+                    &ValueState::AvailableAtTime(_) => panic!(),
+                }
             }
         }
     }
@@ -188,14 +198,14 @@ impl State {
     }
 
     // TODO use this function in a bunch more places
-    pub fn value_mem_availability(&self, value: Node, mem: Memory) -> Option<ValueAvailability> {
+    pub fn value_mem_availability(&self, value: Node, mem: Memory) -> Option<ValueState> {
         self.state_memory_node[mem.0].get(&value).copied()
     }
 
     pub fn value_available_in_mem_now(&self, value: Node, mem: Memory) -> bool {
         match self.value_mem_availability(value, mem) {
-            Some(ValueAvailability::AvailableNow { .. }) => true,
-            Some(ValueAvailability::AvailableAtTime(_)) => false,
+            Some(ValueState::AvailableNow { .. }) => true,
+            Some(ValueState::AvailableAtTime(_)) => false,
             None => false,
         }
     }
@@ -276,39 +286,40 @@ impl State {
         let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
 
         match availability {
-            ValueAvailability::AvailableNow { read_lock_count } => {
+            ValueState::AvailableNow { read_lock_count, read_count } => {
                 *read_lock_count += 1;
+                *read_count += 1;
             }
-            ValueAvailability::AvailableAtTime(_) => panic!(),
+            ValueState::AvailableAtTime(_) => panic!(),
         }
     }
 
     fn release_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
         let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
         match availability {
-            ValueAvailability::AvailableNow { read_lock_count } => {
+            ValueState::AvailableNow { read_lock_count, read_count: _ } => {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
                 if *read_lock_count == 0 {
                     self.trigger_value_mem_unlocked[value.0][mem.0] = true;
                 }
             }
-            ValueAvailability::AvailableAtTime(_) => panic!(),
+            ValueState::AvailableAtTime(_) => panic!(),
         }
     }
 
-    fn mark_mem_value_available(&mut self, value: Node, mem: Memory, availability: ValueAvailability) {
+    fn mark_mem_value_available(&mut self, value: Node, mem: Memory, availability: ValueState) {
         let prev = self.state_memory_node[mem.0].insert(value, availability);
 
         match availability {
-            ValueAvailability::AvailableNow { .. } => {
-                assert!(matches!(prev, Some(ValueAvailability::AvailableAtTime(_))));
+            ValueState::AvailableNow { .. } => {
+                assert!(matches!(prev, Some(ValueState::AvailableAtTime(_))));
 
                 let trigger = &mut self.trigger_value_mem_available[value.0][mem.0];
                 assert!(!*trigger);
                 *trigger = true;
             }
-            ValueAvailability::AvailableAtTime(_) => {
+            ValueState::AvailableAtTime(_) => {
                 assert_eq!(prev, None);
             }
         }
@@ -365,7 +376,7 @@ impl State {
                     for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
                         self.release_mem_value_read_lock(input_value, input_mem);
                     }
-                    self.mark_mem_value_available(alloc.node, alloc.output_memory, ValueAvailability::AvailableNow { read_lock_count: 0 });
+                    self.mark_mem_value_available(alloc.node, alloc.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
                     self.release_core(core);
                 }
             }
@@ -380,7 +391,7 @@ impl State {
 
                 if action.time_end <= time_end {
                     self.release_mem_value_read_lock(action.value, mem_source);
-                    self.mark_mem_value_available(action.value, mem_dest, ValueAvailability::AvailableNow { read_lock_count: 0 });
+                    self.mark_mem_value_available(action.value, mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
                     self.release_channel(channel);
                 }
             }
@@ -411,7 +422,7 @@ impl State {
 
             self.add_mem_value_read_lock(input_value, input_mem);
         }
-        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueAvailability::AvailableAtTime(time_end));
+        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time_end));
         self.claim_core(alloc_info.core, action);
 
         // default
@@ -438,7 +449,7 @@ impl State {
         // real changes
         let (mem_source, mem_dest) = channel_info.mem_source_dest(dir_a_to_b);
         self.add_mem_value_read_lock(value, mem_source);
-        self.mark_mem_value_available(value, mem_dest, ValueAvailability::AvailableAtTime(time_end));
+        self.mark_mem_value_available(value, mem_dest, ValueState::AvailableAtTime(time_end));
         self.claim_channel(channel, action);
 
         // common
@@ -459,10 +470,10 @@ impl State {
 
         match self.value_mem_availability(value, mem) {
             // available now
-            Some(ValueAvailability::AvailableNow { .. }) => (1, 0.0),
+            Some(ValueState::AvailableNow { .. }) => (1, 0.0),
             // available later
             // TODO subtract current time here?
-            Some(ValueAvailability::AvailableAtTime(time)) => (2, -time),
+            Some(ValueState::AvailableAtTime(time)) => (2, -time),
             // not even scheduled, worst case
             None => (3, 0.0),
         }

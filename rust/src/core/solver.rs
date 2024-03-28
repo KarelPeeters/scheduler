@@ -2,7 +2,7 @@ use itertools::{Itertools, zip_eq};
 
 use crate::core::frontier::Frontier;
 use crate::core::problem::{Allocation, Channel, Direction, Memory, Node, Problem};
-use crate::core::state::{Cost, State, ValueAvailability};
+use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
@@ -72,13 +72,28 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         let used_before = state.mem_space_used(problem, mem);
 
         let mem_content = &mut state.state_memory_node[mem.0];
+        let mut exit = false;
+        
         mem_content.retain(|value, &mut availability| {
-            if let ValueAvailability::AvailableNow { read_lock_count } = availability {
-                read_lock_count > 0 || state.value_remaining_unstarted_uses[value.0] > 0
+            if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
+                let dead = state.value_remaining_unstarted_uses[value.0] == 0;
+                
+                if dead && read_count == 0 {
+                    // prune this branch if we're dropping values that haven't been used,
+                    //   we should have avoided copying them in the first place!
+                    exit = true;
+                    return true;
+                }
+                
+                read_lock_count > 0 || !dead
             } else {
                 true
             }
         });
+        
+        if exit {
+            return
+        }
 
         let used_after = state.mem_space_used(problem, mem);
         if used_before != used_after {
