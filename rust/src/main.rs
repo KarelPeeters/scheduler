@@ -1,20 +1,73 @@
+#![allow(dead_code)]
+
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use itertools::{enumerate, Itertools};
+use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
 use rust::core::problem::{AllocationInfo, ChannelInfo, CoreInfo, Direction, Graph, Hardware, MemoryInfo, NodeInfo, Problem};
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
+use rust::util::mini::IterFloatExt;
 
 fn main() {
     let problem = build_problem();
-
     problem.hardware.to_graphviz(problem.core_connected_memories()).export("ignored/hardware.svg").unwrap();
     problem.graph.to_graphviz().export("ignored/graph.svg").unwrap();
-
     problem.assert_valid();
 
+    main_solver(&problem);
+    // main_milp(&problem);
+}
+
+fn main_milp(problem: &Problem) {
+    let mut max_time = 0.0;
+    let mut deltas = HashSet::new();
+    
+    for alloc in &problem.allocation_info {
+        deltas.insert(OrderedFloat(alloc.time));
+    }
+    for node in problem.graph.nodes() {
+        let node_info = &problem.graph.node_info[node.0];
+        
+        for channel in &problem.hardware.channel_info {
+            let channel_value_delta = channel.time_to_transfer(node_info.size_bits);
+            deltas.insert(OrderedFloat(channel_value_delta));
+            
+            // TODO we may need to copy some values across a channel multiple times, so this is not a perfect bound
+            max_time += channel_value_delta;
+        }
+        
+        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min_float().unwrap();
+    }
+    
+    // collect all possible times
+    // TODO upper bound for this?
+    let mut visited = HashSet::new();
+    let mut todo = VecDeque::new();
+    todo.push_back(0.0);
+    while let Some(time_curr) = todo.pop_front() {
+        if time_curr > max_time {
+            continue
+        }
+        
+        if !visited.insert(OrderedFloat(time_curr)) {
+            continue
+        }
+        for delta in &deltas {
+            todo.push_back(time_curr + delta.0);
+        }
+    }
+
+    let visited = visited.iter().copied().sorted().map(|x| x.0).collect_vec();
+    println!("{:?}", visited);
+    println!("Distinct time count: {}", visited.len());
+    println!("Max time: {}", max_time);
+}
+
+fn main_solver(problem: &Problem) {
     let _ = std::fs::remove_dir_all("ignored/schedules/");
     std::fs::create_dir_all("ignored/schedules/done/").unwrap();
     std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
