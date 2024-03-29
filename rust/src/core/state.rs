@@ -572,8 +572,8 @@ impl Dominance for State {
         let mut dom = DomBuilder::new(self, other);
 
         // basics
-        // TODO use min_time here?
         dom.minimize(|s| s.curr_time);
+        dom.minimize(|s| s.minimum_time);
         dom.minimize(|s| s.curr_energy);
         dom_early_check!(dom);
 
