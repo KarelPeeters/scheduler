@@ -131,9 +131,10 @@ fn build_problem() -> Problem {
     let alloc_time = 4000.0;
     let alloc_energy = 100.0;
 
-    let graph_depth = 6;
-    let graph_branching = 4;
+    let graph_depth = 4;
+    let graph_branching = 2;
     let graph_node_size = 1000;
+    let graph_cross = true;
 
     // hardware
     let mut hardware = Hardware::new("hardware");
@@ -175,13 +176,21 @@ fn build_problem() -> Problem {
         inputs: vec![],
     });
     graph.add_input(node_input);
-    let mut prev = vec![node_input; graph_branching];
+    let mut prev = vec![node_input];
     for i_depth in 0..graph_depth {
-        prev = prev.iter().enumerate().map(|(i_branch, &prev)| graph.add_node(NodeInfo {
-            id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-            size_bits: graph_node_size,
-            inputs: vec![prev],
-        })).collect_vec();
+        let next = (0..graph_branching).map(|i_branch| {
+           let inputs = if graph_cross || i_depth == 0 {
+               prev.clone()
+           } else {
+               vec![prev[i_branch]]
+           };
+            graph.add_node(NodeInfo {
+                id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
+                size_bits: graph_node_size,
+                inputs,
+            })
+        }).collect_vec();
+        prev = next;
     }
     let node_output = graph.add_node(NodeInfo {
         id: format!("node-output"),
