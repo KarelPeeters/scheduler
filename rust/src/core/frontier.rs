@@ -193,7 +193,7 @@ impl<K: Dominance, V> Frontier<K, V>  {
         }
 
         // no old was better or equal, we should add new
-        return true;
+        true
     }
 }
 

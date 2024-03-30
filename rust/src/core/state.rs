@@ -132,20 +132,19 @@ impl State {
         let mut expected_state_memory_read_lock_count = vec![HashMap::new(); mem_count];
 
         for state in &self.state_group {
-            if let Some(state) = state {
-                match state {
-                    GroupClaim::Core(state) => {
-                        let alloc = &problem.allocation_info[state.alloc.0];
-                        for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
-                            *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
-                        }
-                        assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time_end));
+            match state {
+                None => {},
+                Some(GroupClaim::Core(state)) => {
+                    let alloc = &problem.allocation_info[state.alloc.0];
+                    for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
+                        *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
                     }
-                    GroupClaim::Channel(state) => {
-                        let channel_info = &problem.hardware.channel_info[state.channel.0];
-                        *expected_state_memory_read_lock_count[channel_info.mem_source.0].entry(state.value).or_insert(0) += 1;
-                        assert_eq!(self.state_memory_node[channel_info.mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time_end));
-                    }
+                    assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time_end));
+                }
+                Some(GroupClaim::Channel(state)) => {
+                    let channel_info = &problem.hardware.channel_info[state.channel.0];
+                    *expected_state_memory_read_lock_count[channel_info.mem_source.0].entry(state.value).or_insert(0) += 1;
+                    assert_eq!(self.state_memory_node[channel_info.mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time_end));
                 }
             }
         }
@@ -164,11 +163,11 @@ impl State {
             }
 
             for (node, &expected_read_lock_count) in expected {
-                match actual.get(node).unwrap() {
-                    &ValueState::AvailableNow { read_count: _, read_lock_count  } => {
+                match *actual.get(node).unwrap() {
+                    ValueState::AvailableNow { read_count: _, read_lock_count  } => {
                         assert_eq!(read_lock_count, expected_read_lock_count);
                     }
-                    &ValueState::AvailableAtTime(_) => panic!(),
+                    ValueState::AvailableAtTime(_) => panic!(),
                 }
             }
         }
