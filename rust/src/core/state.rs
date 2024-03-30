@@ -328,7 +328,7 @@ impl State {
         // TODO avoid cloning these in the first place!
         // TODO do these before or after completing the operations? probably before, since them mem usage is highest
         self.clear_triggers();
-        self.maybe_clear_tried();
+        self.maybe_clear_tried(problem);
 
         // complete core operations
         for group in problem.hardware.groups() {
@@ -422,12 +422,69 @@ impl State {
         self.curr_energy += energy_delta;
     }
 
-    fn maybe_clear_tried(&mut self) {
-        // TODO only drop iff any of
+    fn maybe_clear_tried(&mut self, problem: &Problem) {
+        // only drop iff any of
+        //   * the action is not longer relevant and will no longer be tried anyway (eg. because the involved values are dead)
         //   * we decided to do something else with that group in that time slot (not necessarily at the same start, just overlapping)
         //   * the output value would not have fit in memory at some point between then and now
-        self.tried_allocs.clear();
-        self.tried_transfers.clear();
+        let mut tried_transfers = std::mem::take(&mut self.tried_transfers);
+        tried_transfers.retain(|&(channel, node), &mut time| {
+            // dead
+            if self.value_remaining_unstarted_uses[node.0] == 0 {
+                return false;
+            }
+
+            // overlap
+            let channel_info = &problem.hardware.channel_info[channel.0];
+            if let Some(claim) = self.state_group[channel_info.group.0] {
+                if claim.time().overlaps(time) {
+                    return false;
+                }
+            }
+
+            // fit
+            {
+                let mut dummy = self.new_trigger();
+                if !dummy.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.node_info[node.0].size_bits) {
+                    return false;
+                }
+            }
+
+            // keep
+            true
+        });
+        assert!(self.tried_transfers.is_empty());
+        self.tried_transfers = tried_transfers;
+
+        let mut tried_allocs = std::mem::take(&mut self.tried_allocs);
+        tried_allocs.retain(|&alloc, &mut time| {
+            let alloc_info = &problem.allocation_info[alloc.0];
+
+            // dead
+            if !self.unstarted_nodes.contains(&alloc_info.node) {
+                return false;
+            }
+
+            // overlap
+            if let Some(claim) = self.state_group[alloc_info.group.0] {
+                if claim.time().overlaps(time) {
+                    return false;
+                }
+            }
+
+            // fit
+            {
+                let mut dummy = self.new_trigger();
+                if !dummy.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.node_info[alloc_info.node.0].size_bits) {
+                    return false;
+                }
+            }
+
+            // keep
+            true
+        });
+        assert!(self.tried_allocs.is_empty());
+        self.tried_allocs = tried_allocs;
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> impl PartialOrd {

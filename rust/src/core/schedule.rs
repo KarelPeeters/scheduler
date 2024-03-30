@@ -30,3 +30,11 @@ pub struct TimeRange {
     pub start: f64,
     pub end: f64,
 }
+
+
+impl TimeRange {
+    pub fn overlaps(self, other: TimeRange) -> bool {
+        assert!(!self.start.is_nan() && !self.end.is_nan() && !other.start.is_nan() && !other.end.is_nan());
+        self.start < other.end && other.start < self.end
+    }
+}
