@@ -65,6 +65,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "poloto"
+version = "19.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "164dbd541c9832e92fa34452e9c2e98b515a548a3f8549fb2402fe1cd5e46b96"
+dependencies = [
+ "tagu",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,8 +115,15 @@ version = "0.1.0"
 dependencies = [
  "itertools",
  "ordered-float",
+ "poloto",
  "rand",
 ]
+
+[[package]]
+name = "tagu"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eddb6b06d20fba9ed21fca3d696ee1b6e870bca0bcf9fa2971f6ae2436de576a"
 
 [[package]]
 name = "wasi"

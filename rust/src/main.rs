@@ -104,6 +104,7 @@ impl Reporter for CustomReporter {
         for (i, (_, state)) in enumerate(frontier.iter_arbitrary()) {
             state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
         }
+        frontier.write_svg_to_file("ignored/schedules/frontier.svg").unwrap();
     }
 
     fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State) {

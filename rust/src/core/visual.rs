@@ -1,10 +1,11 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use crate::core::frontier::Frontier;
 
 use crate::core::problem::Problem;
-use crate::core::schedule::{Action, TimeRange};
-use crate::core::state::State;
+use crate::core::schedule::{Action};
+use crate::core::state::{Cost, State};
 
 impl State {
     pub fn write_svg_to<F: Write>(&self, problem: &Problem, mut f: F) -> std::io::Result<()> {
@@ -50,7 +51,7 @@ impl State {
             let y = row_to_y(group.0);
             writeln!(
                 f,
-                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='left' font-weight='bold'>{t}</text>",
+                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
                 x = padding_left / 10.0,
                 y = y + row_height / 2.0,
                 t = group_info.id,
@@ -69,7 +70,7 @@ impl State {
 
         // vertical lines and labels
         for t in pick_axis_ticks(time_max, 20) {
-            let x = time_to_x(t as f64);
+            let x = time_to_x(t);
             writeln!(
                 f,
                 "<line x1='{x}' y1='{y1}' x2='{x}' y2='{y2}' stroke='grey' stroke-dasharray='5,5' />",
@@ -154,7 +155,6 @@ impl State {
         self.write_svg_to(problem, &mut f)?;
         f.flush()?;
         drop(f);
-        std::process::exit(0);
         Ok(())
     }
 }
@@ -171,4 +171,26 @@ fn pick_axis_ticks(max_value: f64, _max_ticks: usize) -> Vec<f64> {
         ticks.push(max_value);
     }
     ticks
+}
+
+impl<V> Frontier<Cost, V> {
+    pub fn write_svg_to(&self, mut f: impl Write) -> std::io::Result<()> {
+        let line = poloto::build::plot("frontier")
+            .scatter(self.iter_arbitrary().map(|(&c, _)| (c.time, c.energy)));
+        let plots = poloto::plots!(line);
+
+        let result = poloto::frame_build().data(plots)
+            .build_and_label(("Pareto front", "Time", "Energy"))
+            .append_to(poloto::header().light_theme())
+            .render_string().unwrap();
+        write!(f, "{}", result)
+    }
+
+    pub fn write_svg_to_file(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let mut f = BufWriter::new(File::create(path)?);
+        self.write_svg_to(&mut f)?;
+        f.flush()?;
+        drop(f);
+        Ok(())
+    }
 }
