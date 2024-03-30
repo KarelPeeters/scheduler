@@ -46,6 +46,11 @@
 * Try shuffling the order of actions instead of picking some potentially worst case fixed ordering.
 * Drop useless operations in done state to get tighter bound.
   * ie. still-running and transfers that didn't get used
+* Don't take actions that could have been taken earlier.
+
+# Input preprocessing
+* Drop dominated allocations (and maybe channels if that's possible)?
+* Remove impossible to use channels, memories, allocations.
 
 # Low level optimizations
 

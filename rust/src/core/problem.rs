@@ -23,7 +23,7 @@ pub struct Allocation(pub usize);
 #[derive(Debug)]
 pub struct AllocationInfo {
     pub id: String,
-    pub core: Core,
+    pub group: Group,
     pub node: Node,
 
     pub input_memories: Vec<Memory>,
@@ -58,12 +58,13 @@ pub struct NodeInfo {
 pub struct Hardware {
     pub id: String,
     pub mem_info: Vec<MemoryInfo>,
+    pub group_info: Vec<GroupInfo>,
     pub channel_info: Vec<ChannelInfo>,
-    pub core_info: Vec<CoreInfo>,
 }
 
+// TODO rename group?
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Core(pub usize);
+pub struct Group(pub usize);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Channel(pub usize);
@@ -72,7 +73,7 @@ pub struct Channel(pub usize);
 pub struct Memory(pub usize);
 
 #[derive(Debug)]
-pub struct CoreInfo {
+pub struct GroupInfo {
     pub id: String,
 }
 
@@ -80,21 +81,13 @@ pub struct CoreInfo {
 pub struct ChannelInfo {
     pub id: String,
 
-    pub mem_a: Memory,
-    pub mem_b: Memory,
-    pub dir: Direction,
+    pub group: Group,
+    pub mem_source: Memory,
+    pub mem_dest: Memory,
 
     pub latency: f64,
     pub time_per_bit: f64,
     pub energy_per_bit: f64,
-}
-
-// TODO replace direction with only uni-directional channels and constraint groups
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Direction {
-    AtoB,
-    BtoA,
-    Both,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -116,24 +109,24 @@ impl Problem {
         self.graph.assert_valid();
 
         for alloc in &self.allocation_info {
-            assert!(alloc.core.0 < self.hardware.cores().len());
-            assert!(alloc.node.0 < self.graph.node_info.len());
+            assert!(alloc.group.0 < self.hardware.groups().len());
+            assert!(alloc.node.0 < self.graph.nodes().len());
             for mem in &alloc.input_memories {
-                assert!(mem.0 < self.hardware.mem_info.len());
+                assert!(mem.0 < self.hardware.memories().len());
             }
-            assert!(alloc.output_memory.0 < self.hardware.mem_info.len());
+            assert!(alloc.output_memory.0 < self.hardware.memories().len());
 
             assert_eq!(alloc.input_memories.len(), self.graph.node_info[alloc.node.0].inputs.len());
         }
 
         assert_eq!(self.input_placements.len(), self.graph.inputs.len());
         for mem in &self.input_placements {
-            assert!(mem.0 < self.hardware.mem_info.len());
+            assert!(mem.0 < self.hardware.memories().len());
         }
 
         assert_eq!(self.output_placements.len(), self.graph.outputs.len());
         for mem in &self.output_placements {
-            assert!(mem.0 < self.hardware.mem_info.len());
+            assert!(mem.0 < self.hardware.memories().len());
         }
     }
 
@@ -142,15 +135,18 @@ impl Problem {
     }
 
     pub fn core_connected_memories(&self) -> Vec<(HashSet<Memory>, HashSet<Memory>)> {
-        let mut result = vec![(HashSet::new(), HashSet::new()); self.hardware.cores().len()];
-
-        for alloc in &self.allocation_info {
-            let (inputs, outputs) = &mut result[alloc.core.0];
-            inputs.extend(alloc.input_memories.iter().copied());
-            outputs.insert(alloc.output_memory);
-        }
-
-        result
+        // TODO this has lost even more meaning
+        vec![]
+        
+        // let mut result = vec![(HashSet::new(), HashSet::new()); self.hardware.cores().len()];
+        // 
+        // for alloc in &self.allocation_info {
+        //     let (inputs, outputs) = &mut result[alloc.core.0];
+        //     inputs.extend(alloc.input_memories.iter().copied());
+        //     outputs.insert(alloc.output_memory);
+        // }
+        // 
+        // result
     }
 }
 
@@ -236,7 +232,7 @@ impl Graph {
 
 impl Hardware {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), mem_info: vec![], core_info: vec![], channel_info: vec![] }
+        Self { id: id.into(), mem_info: vec![], group_info: vec![], channel_info: vec![] }
     }
 
     pub fn memories(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Memory> {
@@ -247,22 +243,23 @@ impl Hardware {
         (0..self.channel_info.len()).map(Channel)
     }
 
-    pub fn cores(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Core> {
-        (0..self.core_info.len()).map(Core)
+    pub fn groups(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Group> {
+        (0..self.group_info.len()).map(Group)
     }
 
     pub fn add_memory(&mut self, info: MemoryInfo) -> Memory {
-        let memory = Memory(self.mem_info.len());
+        let memory = Memory(self.memories().len());
         self.mem_info.push(info);
         memory
     }
 
-    pub fn add_core(&mut self, info: CoreInfo) -> Core {
-        let core = Core(self.core_info.len());
-        self.core_info.push(info);
-        core
+    pub fn add_group(&mut self, info: GroupInfo) -> Group {
+        let group = Group(self.group_info.len());
+        self.group_info.push(info);
+        group
     }
 
+    // TODO bidirectional channel utility
     pub fn add_channel(&mut self, info: ChannelInfo) -> Channel {
         let channel = Channel(self.channel_info.len());
         self.channel_info.push(info);
@@ -270,7 +267,8 @@ impl Hardware {
         channel
     }
 
-    pub fn to_graphviz(&self, core_connected_memories: Vec<(HashSet<Memory>, HashSet<Memory>)>) -> GraphViz {
+    // TODO render groups as a box around channels + a core if there are allocs in it?
+    pub fn to_graphviz(&self, _: Vec<(HashSet<Memory>, HashSet<Memory>)>) -> GraphViz {
         let mut g = GraphViz::new();
 
         g.push(format!("label=<<B>{}</B>>", self.id));
@@ -294,6 +292,7 @@ impl Hardware {
             let info = &self.channel_info[channel.0];
             let rows = vec![
                 ("id", info.id.clone()),
+                ("group", self.group_info[info.group.0].id.clone()),
                 ("latency", info.latency.to_string()),
                 ("time_per_bit", info.time_per_bit.to_string()),
                 ("energy_per_bit", info.energy_per_bit.to_string()),
@@ -303,41 +302,39 @@ impl Hardware {
             let label = GraphViz::table("Channel", rows);
             g.push(format!("{} [label=<{}>, shape=box, color=darkorange]", mid, label));
 
-            let head = format!("mem_{}", info.mem_a.0);
-            let tail = format!("mem_{}", info.mem_b.0);
+            // TODO fuse pairs of channels that are identical and form a group?
+            let head = format!("mem_{}", info.mem_source.0);
+            let tail = format!("mem_{}", info.mem_dest.0);
 
-            let dir = match info.dir {
-                Direction::AtoB => "forward",
-                Direction::BtoA => "backward",
-                Direction::Both => "both",
-            };
-
+            let dir = "forward";
             g.push(format!("{} -> {} [dir={}, color=darkorange]", head, mid, dir));
             g.push(format!("{} -> {} [dir={}, color=darkorange]", mid, tail, dir));
         }
+        
+        // TODO render allocs and groups as cores?
 
-        for  core in self.cores() {
-            let rows = vec![
-                ("id", self.core_info[core.0].id.clone()),
-            ];
-            let label = GraphViz::table("Core", rows);
-            g.push(format!("core_{} [label=<{}>, color=green]", core.0, label));
-
-            for (j, mem) in self.memories().enumerate() {
-                let (inputs, outputs) = &core_connected_memories[core.0];
-
-                let dir = match (inputs.contains(&mem), outputs.contains(&mem)) {
-                    (true, true) => "both",
-                    (true, false) => "input",
-                    (false, true) => "output",
-                    (false, false) => continue,
-                };
-
-                let head = format!("mem_{}", j);
-                let tail = format!("core_{}", core.0);
-                g.push(format!("{} -> {} [dir={}, color=green]", head, tail, dir));
-            }
-        }
+        // for  core in self.cores() {
+        //     let rows = vec![
+        //         ("id", self.core_info[core.0].id.clone()),
+        //     ];
+        //     let label = GraphViz::table("Core", rows);
+        //     g.push(format!("core_{} [label=<{}>, color=green]", core.0, label));
+        // 
+        //     for (j, mem) in self.memories().enumerate() {
+        //         let (inputs, outputs) = &core_connected_memories[core.0];
+        // 
+        //         let dir = match (inputs.contains(&mem), outputs.contains(&mem)) {
+        //             (true, true) => "both",
+        //             (true, false) => "input",
+        //             (false, true) => "output",
+        //             (false, false) => continue,
+        //         };
+        // 
+        //         let head = format!("mem_{}", j);
+        //         let tail = format!("core_{}", core.0);
+        //         g.push(format!("{} -> {} [dir={}, color=green]", head, tail, dir));
+        //     }
+        // }
 
         g
     }
@@ -345,8 +342,8 @@ impl Hardware {
     fn assert_channel_valid(&self, channel: Channel) {
         assert!(channel.0 < self.channel_info.len());
         let channel = &self.channel_info[channel.0];
-        assert!(channel.mem_a.0 < self.mem_info.len());
-        assert!(channel.mem_b.0 < self.mem_info.len());
+        assert!(channel.mem_source.0 < self.memories().len());
+        assert!(channel.mem_dest.0 < self.memories().len());
         assert!(channel.latency >= 0.0 && channel.time_per_bit >= 0.0 && channel.energy_per_bit >= 0.0);
     }
 
@@ -364,22 +361,5 @@ impl ChannelInfo {
 
     pub fn time_to_transfer(&self, size_bits: u64) -> f64 {
         self.latency + self.time_per_bit * size_bits as f64
-    }
-
-    pub fn mem_source_dest(&self, dir_a_to_b: bool) -> (Memory, Memory) {
-        match dir_a_to_b {
-            true => (self.mem_a, self.mem_b),
-            false => (self.mem_b, self.mem_a),
-        }
-    }
-}
-
-impl Direction {
-    pub fn to_pair(&self) -> (bool, bool) {
-        match self {
-            Direction::AtoB => (true, false),
-            Direction::BtoA => (false, true),
-            Direction::Both => (true, true),
-        }
     }
 }

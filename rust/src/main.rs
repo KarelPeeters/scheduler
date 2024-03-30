@@ -7,7 +7,7 @@ use itertools::{enumerate, Itertools};
 use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
-use rust::core::problem::{AllocationInfo, ChannelInfo, CoreInfo, Direction, Graph, Hardware, MemoryInfo, NodeInfo, Problem};
+use rust::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
 use rust::util::mini::IterFloatExt;
@@ -142,30 +142,34 @@ fn build_problem() -> Problem {
     let mem_ext = hardware.add_memory(MemoryInfo { id: "mem_ext".to_owned(), size_bits: mem_size_ext });
 
     let mut mem_core = vec![];
-    let mut cores = vec![];
+    let mut core_groups = vec![];
 
     for i in 0..hardware_depth {
-        cores.push(hardware.add_core(CoreInfo { id: format!("core_{}", i) }));
+        core_groups.push(hardware.add_group(GroupInfo { id: format!("core_{i}") }));
 
         let mem_curr = hardware.add_memory(MemoryInfo { id: format!("mem_chip_{}", i), size_bits: mem_size_chip });
         mem_core.push(mem_curr);
 
-        let (id, prev, bandwidth, energy) = if i == 0 {
+        let (id, mem_prev, bandwidth, energy) = if i == 0 {
             (format!("channel_ext_0"), mem_ext, bandwidth_ext, energy_ext)
         } else {
             (format!("channel_chip_{}", i), mem_core[i - 1], bandwidth_chip, energy_chip)
         };
 
-        let channel_info = ChannelInfo {
-            id,
-            mem_a: prev,
-            mem_b: mem_curr,
-            dir: Direction::Both,
-            latency: 0.0,
-            time_per_bit: 1.0 / bandwidth,
-            energy_per_bit: energy,
-        };
-        hardware.add_channel(channel_info);
+        let channel_group = hardware.add_group(GroupInfo { id: id.clone() });
+
+        for (dir, mem_source, mem_dest) in [("fwd", mem_prev, mem_curr), ("bck", mem_curr, mem_prev)] {
+            let channel_info = ChannelInfo {
+                id: format!("{id}_{dir}"),
+                group: channel_group,
+                mem_source,
+                mem_dest,
+                latency: 0.0,
+                time_per_bit: 1.0 / bandwidth,
+                energy_per_bit: energy,
+            };
+            hardware.add_channel(channel_info);
+        }
     }
 
     // graph
@@ -201,11 +205,11 @@ fn build_problem() -> Problem {
 
     // allocations
     let mut allocations = vec![];
-    for (i, &core) in enumerate(&cores) {
+    for (i, &core_group) in enumerate(&core_groups) {
         for node in graph.nodes() {
             allocations.push(AllocationInfo {
-                id: format!("basic"),
-                core,
+                id: "basic".to_string(),
+                group: core_group,
                 node,
                 input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
                 output_memory: mem_core[i],

@@ -25,6 +25,5 @@ pub struct ActionChannel {
     pub time_start: f64,
     pub time_end: f64,
     pub channel: Channel,
-    pub dir_a_to_b: bool,
     pub value: Node,
 }

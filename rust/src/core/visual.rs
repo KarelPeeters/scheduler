@@ -8,7 +8,7 @@ use crate::core::state::State;
 
 impl State {
     pub fn write_svg_to<F: Write>(&self, problem: &Problem, mut f: F) -> std::io::Result<()> {
-        let row_count = problem.hardware.cores().len() + problem.hardware.channels().len();
+        let row_count = problem.hardware.groups().len();
         let time_max = self.minimum_time;
 
         let row_height = 100.0;
@@ -30,15 +30,6 @@ impl State {
             row_height,
             100.0 * (1.0 - 2.0 * horizontal_padding_frac),
             figure_height - 2.0 * row_height
-        )?;
-        // split between cores and channels
-        writeln!(
-            f,
-            "<line x1='{}%' y1='{}' x2='{}%' y2='{}' stroke='black' />",
-            100.0 * horizontal_padding_frac,
-            (problem.hardware.cores().len() as f64 + 1.0) * row_height,
-            100.0 * (1.0 - horizontal_padding_frac),
-            (problem.hardware.cores().len() as f64 + 1.0) * row_height
         )?;
 
         // draw action rectangles
@@ -74,17 +65,17 @@ impl State {
                     // don't draw anything
                 }
                 Action::Core(action) => {
-                    // plot core
                     let alloc_info = &problem.allocation_info[action.alloc.0];
                     let node_info = &problem.graph.node_info[alloc_info.node.0];
 
-                    let row = alloc_info.core.0;
+                    let row = alloc_info.group.0;
                     rect(&mut f, row, action.time_start, action.time_end, "green", &node_info.id)?;
                 }
                 Action::Channel(action) => {
-                    let row = problem.hardware.cores().len() + action.channel.0;
+                    let channel_info = &problem.hardware.channel_info[action.channel.0];
                     let node_info = &problem.graph.node_info[action.value.0];
-
+                    
+                    let row = channel_info.group.0;
                     rect(&mut f, row, action.time_start, action.time_end, "darkorange", &node_info.id)?;
                 }
             }

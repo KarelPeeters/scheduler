@@ -1,7 +1,7 @@
 use itertools::{Itertools, zip_eq};
 
 use crate::core::frontier::Frontier;
-use crate::core::problem::{Allocation, Channel, Direction, Memory, Node, Problem};
+use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
@@ -136,7 +136,7 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
     // trigger checks
     let mut trigger = state.new_trigger();
 
-    if !trigger.check_core_free(alloc_info.core) {
+    if !trigger.check_group_free(alloc_info.group) {
         return;
     }
     if !trigger.check_mem_space_available(problem, alloc_info.output_memory, node_info.size_bits) {
@@ -166,37 +166,25 @@ fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, cha
     let channel_info = &problem.hardware.channel_info[channel.0];
 
     // check that channel is actually free before going through the following loops
-    if state.state_channel[channel.0].is_some() {
+    if state.state_group[channel_info.group.0].is_some() {
         return;
     }
 
-    // try allowed directions directions
-    let dirs: &[bool] = match channel_info.dir {
-        Direction::AtoB => &[true],
-        Direction::BtoA => &[false],
-        Direction::Both => &[true, false],
-    };
-
-    // try different values
-    for &dir_a_to_b in dirs {
-        let mem_source = if dir_a_to_b { channel_info.mem_a } else { channel_info.mem_b };
-        // TODO avoid copy?
-        let values = state.state_memory_node[mem_source.0].keys().copied().collect_vec();
-        for value in values {
-            recurse_try_channel_transfer(ctx, state, channel, value, dir_a_to_b);
-        }
+    // TODO avoid copy
+    let values = state.state_memory_node[channel_info.mem_source.0].keys().copied().collect_vec();
+    for value in values {
+        recurse_try_channel_transfer(ctx, state, channel, value);
     }
 }
 
-fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel, value: Node, dir_a_to_b: bool) {
+fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel, value: Node) {
     // aliases
     let problem = ctx.problem;
     let value_info = &problem.graph.node_info[value.0];
     let channel_info = &problem.hardware.channel_info[channel.0];
-    let (mem_source, mem_dest) = channel_info.mem_source_dest(dir_a_to_b);
 
     // basic checks
-    let tried_key = (channel, value, dir_a_to_b);
+    let tried_key = (channel, value);
     if state.tried_transfers.contains(&tried_key) {
         return;
     }
@@ -207,14 +195,15 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
 
     // trigger checks
     let mut trigger = state.new_trigger();
-    assert!(trigger.check_channel_free(channel));
-    if !trigger.check_mem_value_available(mem_source, value) {
+    //   group free was already checked earlier
+    assert!(trigger.check_group_free(channel_info.group));
+    if !trigger.check_mem_value_available(channel_info.mem_source, value) {
         return;
     }
-    if !trigger.check_mem_value_not_available(mem_dest, value) {
+    if !trigger.check_mem_value_not_available(channel_info.mem_dest, value) {
         return;
     }
-    if !trigger.check_mem_space_available(problem, mem_dest, value_info.size_bits) {
+    if !trigger.check_mem_space_available(problem, channel_info.mem_dest, value_info.size_bits) {
         return;
     }
     if !trigger.was_triggered() {
@@ -222,7 +211,7 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
     }
 
     // do action
-    let state_next = state.clone_and_then(|n| n.do_action_channel(problem, channel, value, dir_a_to_b));
+    let state_next = state.clone_and_then(|n| n.do_action_channel(problem, channel, value));
     recurse(ctx, state_next);
 
     // mark as tried
