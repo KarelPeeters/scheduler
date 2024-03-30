@@ -126,7 +126,7 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
     let node_info = &problem.graph.node_info[node.0];
 
     // basic checks
-    if state.tried_allocs.contains(&alloc) {
+    if state.tried_allocs.contains_key(&alloc) {
         return;
     }
     if !state.unstarted_nodes.contains(&node) {
@@ -153,11 +153,13 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
     }
 
     // do action
-    let state_next = state.clone_and_then(|n| n.do_action_core(problem, alloc));
+    let mut time_range = None;
+    let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_core(problem, alloc)));
     recurse(ctx, state_next);
 
     // mark as tried
-    assert!(state.tried_allocs.insert(alloc));
+    let prev = state.tried_allocs.insert(alloc, time_range.unwrap()).is_none();
+    assert!(prev);
 }
 
 fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel) {
@@ -185,7 +187,7 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
 
     // basic checks
     let tried_key = (channel, value);
-    if state.tried_transfers.contains(&tried_key) {
+    if state.tried_transfers.contains_key(&tried_key) {
         return;
     }
     // don't bother copying dead values around
@@ -211,9 +213,11 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
     }
 
     // do action
-    let state_next = state.clone_and_then(|n| n.do_action_channel(problem, channel, value));
+    let mut time_range = None;
+    let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_channel(problem, channel, value)));
     recurse(ctx, state_next);
 
     // mark as tried
-    assert!(state.tried_transfers.insert(tried_key));
+    let prev = state.tried_transfers.insert((channel, value), time_range.unwrap());
+    assert!(prev.is_none());
 }

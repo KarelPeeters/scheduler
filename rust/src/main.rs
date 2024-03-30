@@ -40,7 +40,7 @@ fn main_milp(problem: &Problem) {
             max_time += channel_value_delta;
         }
         
-        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min_float().unwrap();
+        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min_f64().unwrap();
     }
     
     // collect all possible times

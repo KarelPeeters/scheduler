@@ -1,9 +1,9 @@
 pub trait IterFloatExt: Iterator {
-    fn min_float(self) -> Option<Self::Item>;
+    fn min_f64(self) -> Option<Self::Item>;
 }
 
 impl<I: Iterator<Item = f64>> IterFloatExt for I {
-    fn min_float(mut self) -> Option<Self::Item> {
+    fn min_f64(mut self) -> Option<Self::Item> {
         let mut min = self.next()?;
         if min.is_nan() {
             return Some(min);
@@ -29,4 +29,14 @@ pub fn min_f64(a: f64, b: f64) -> f64 {
         return b;
     }
     f64::min(a, b)
+}
+
+pub fn max_f64(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        return a;
+    }
+    if b.is_nan() {
+        return b;
+    }
+    f64::max(a, b)
 }

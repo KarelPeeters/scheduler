@@ -69,14 +69,14 @@ impl State {
                     let node_info = &problem.graph.node_info[alloc_info.node.0];
 
                     let row = alloc_info.group.0;
-                    rect(&mut f, row, action.time_start, action.time_end, "green", &node_info.id)?;
+                    rect(&mut f, row, action.time.start, action.time.end, "green", &node_info.id)?;
                 }
                 Action::Channel(action) => {
                     let channel_info = &problem.hardware.channel_info[action.channel.0];
                     let node_info = &problem.graph.node_info[action.value.0];
                     
                     let row = channel_info.group.0;
-                    rect(&mut f, row, action.time_start, action.time_end, "darkorange", &node_info.id)?;
+                    rect(&mut f, row, action.time.start, action.time.end, "darkorange", &node_info.id)?;
                 }
             }
         }

@@ -4,9 +4,9 @@ use itertools::{chain, enumerate, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
-use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait};
+use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait, TimeRange};
 use crate::dom_early_check;
-use crate::util::mini::{IterFloatExt, min_f64};
+use crate::util::mini::{IterFloatExt, max_f64};
 
 #[derive(Clone)]
 pub struct State {
@@ -32,9 +32,9 @@ pub struct State {
     pub trigger_value_mem_unlocked: Vec<Vec<bool>>,
     pub trigger_mem_usage_decreased: Vec<(u64, u64)>,
 
-    // filtering
-    pub tried_allocs: HashSet<Allocation>,
-    pub tried_transfers: HashSet<(Channel, Node)>,
+    // filtering (attempt -> most recent time range)
+    pub tried_allocs: HashMap<Allocation, TimeRange>,
+    pub tried_transfers: HashMap<(Channel, Node), TimeRange>,
 }
 
 // TODO rename
@@ -113,8 +113,8 @@ impl State {
             trigger_value_mem_available: vec![vec![false; mem_count]; node_count],
             trigger_value_mem_unlocked: vec![vec![false; mem_count]; node_count],
             trigger_mem_usage_decreased: vec![],
-            tried_allocs: HashSet::new(),
-            tried_transfers: HashSet::new(),
+            tried_allocs: HashMap::new(),
+            tried_transfers: HashMap::new(),
         }
     }
 
@@ -139,12 +139,12 @@ impl State {
                     for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
                         *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
                     }
-                    assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time_end));
+                    assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time.end));
                 }
                 Some(GroupClaim::Channel(state)) => {
                     let channel_info = &problem.hardware.channel_info[state.channel.0];
                     *expected_state_memory_read_lock_count[channel_info.mem_source.0].entry(state.value).or_insert(0) += 1;
-                    assert_eq!(self.state_memory_node[channel_info.mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time_end));
+                    assert_eq!(self.state_memory_node[channel_info.mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time.end));
                 }
             }
         }
@@ -179,18 +179,18 @@ impl State {
             problem.allocation_info.iter()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.energy)
-                .min_float().unwrap()
+                .min_f64().unwrap()
         }).sum::<f64>();
 
         let min_additional_time = self.unstarted_nodes.iter().map(|node| {
             problem.allocation_info.iter()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.time)
-                .min_float().unwrap()
+                .min_f64().unwrap()
         }).sum::<f64>();
 
         Cost {
-            time: f64::max(self.minimum_time, self.curr_time + min_additional_time),
+            time: max_f64(self.minimum_time, self.curr_time + min_additional_time),
             energy: self.curr_energy + min_additional_energy,
         }
     }
@@ -241,19 +241,7 @@ impl State {
     }
 
     pub fn first_done_time(&self) -> Option<f64> {
-        let mut result = f64::INFINITY;
-
-        for action in &self.state_group {
-            if let Some(action) = action {
-                result = min_f64(result, action.time_end());
-            }
-        }
-
-        if result == f64::INFINITY {
-            None
-        } else {
-            Some(result)
-        }
+        self.state_group.iter().filter_map(|a| a.map(|a| a.time().end)).min_f64()
     }
 
     #[must_use]
@@ -263,15 +251,12 @@ impl State {
         next
     }
 
-    pub fn clear_triggers_and_tried(&mut self) {
+    pub fn clear_triggers(&mut self) {
         self.trigger_everything = false;
         self.trigger_group_free.iter_mut().for_each(|x| *x = false);
         self.trigger_value_mem_available.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
         self.trigger_value_mem_unlocked.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
         self.trigger_mem_usage_decreased.clear();
-
-        self.tried_allocs.clear();
-        self.tried_transfers.clear();
     }
 
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
@@ -338,15 +323,17 @@ impl State {
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
         self.curr_time = time_end;
-        self.actions_taken.push(Action::Wait(ActionWait { time_start: self.curr_time, time_end }));
+        self.actions_taken.push(Action::Wait(ActionWait { time: TimeRange { start: self.curr_time, end: time_end}}));
 
         // TODO avoid cloning these in the first place!
-        self.clear_triggers_and_tried();
+        // TODO do these before or after completing the operations? probably before, since them mem usage is highest
+        self.clear_triggers();
+        self.maybe_clear_tried();
 
         // complete core operations
         for group in problem.hardware.groups() {
             if let Some(action) = self.state_group[group.0] {
-                if action.time_end() > time_end {
+                if action.time().end > time_end {
                     // not done yet
                     continue
                 }
@@ -371,7 +358,7 @@ impl State {
         }
     }
 
-    pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) {
+    pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
         let alloc_info = &problem.allocation_info[alloc.0];
         let node_info = &problem.graph.node_info[alloc_info.node.0];
 
@@ -380,9 +367,9 @@ impl State {
         let energy_delta = alloc_info.energy;
 
         let time_end = self.curr_time + time_delta;
+        let time_range = TimeRange { start: self.curr_time, end: time_end };
         let action = ActionCore {
-            time_start: self.curr_time,
-            time_end,
+            time: time_range,
             alloc,
         };
 
@@ -398,11 +385,12 @@ impl State {
         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time_end));
         self.claim_group(alloc_info.group, GroupClaim::Core(action));
 
-        // default
+        // common
         self.start_action_common(Action::Core(action), time_end, energy_delta);
+        time_range
     }
 
-    pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node) {
+    pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node) -> TimeRange {
         let channel_info = &problem.hardware.channel_info[channel.0];
 
         // metadata
@@ -411,9 +399,9 @@ impl State {
         let energy_delta = channel_info.energy_to_transfer(size_bits);
 
         let time_end = self.curr_time + time_delta;
+        let time_range = TimeRange { start: self.curr_time, end: time_end };
         let action = ActionChannel {
-            time_start: self.curr_time,
-            time_end,
+            time: time_range,
             channel,
             value,
         };
@@ -425,12 +413,21 @@ impl State {
 
         // common
         self.start_action_common(Action::Channel(action), time_end, energy_delta);
+        time_range
     }
 
     fn start_action_common(&mut self, action: Action, time_end: f64, energy_delta: f64) {
         self.actions_taken.push(action);
         self.minimum_time = f64::max(self.minimum_time, time_end);
         self.curr_energy += energy_delta;
+    }
+
+    fn maybe_clear_tried(&mut self) {
+        // TODO only drop iff any of
+        //   * we decided to do something else with that group in that time slot (not necessarily at the same start, just overlapping)
+        //   * the output value would not have fit in memory at some point between then and now
+        self.tried_allocs.clear();
+        self.tried_transfers.clear();
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> impl PartialOrd {
@@ -546,7 +543,7 @@ impl Dominance for State {
                 match s.state_group[group.0] {
                     // TODO why does changing this to curr_time cause transitive property failures?
                     None => -f64::INFINITY,
-                    Some(action) => action.time_end(),
+                    Some(action) => action.time().end,
                 }
             });
             dom_early_check!(dom);
@@ -580,10 +577,10 @@ impl Dominance for Cost {
 }
 
 impl GroupClaim {
-    fn time_end(&self) -> f64 {
+    fn time(&self) -> TimeRange {
         match self {
-            GroupClaim::Core(a) => a.time_end,
-            GroupClaim::Channel(a) => a.time_end,
+            GroupClaim::Core(a) => a.time,
+            GroupClaim::Channel(a) => a.time,
         }
     }
 }

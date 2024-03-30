@@ -9,21 +9,24 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActionWait {
-    pub time_start: f64,
-    pub time_end: f64,
+    pub time: TimeRange,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActionCore {
-    pub time_start: f64,
-    pub time_end: f64,
+    pub time: TimeRange,
     pub alloc: Allocation,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActionChannel {
-    pub time_start: f64,
-    pub time_end: f64,
+    pub time: TimeRange,
     pub channel: Channel,
     pub value: Node,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TimeRange {
+    pub start: f64,
+    pub end: f64,
 }
