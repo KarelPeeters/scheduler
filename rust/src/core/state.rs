@@ -598,8 +598,7 @@ impl Dominance for State {
         for group in problem.hardware.groups() {
             dom.minimize(|s| {
                 match s.state_group[group.0] {
-                    // TODO why does changing this to curr_time cause transitive property failures?
-                    None => -f64::INFINITY,
+                    None => s.curr_time,
                     Some(action) => action.time().end,
                 }
             });
