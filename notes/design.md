@@ -54,6 +54,21 @@
 
 # Low level optimizations
 
+* Optimize the pareto checks
+  * Keywords: skyline data structure, R-trees
+  * Can we construct an R-tree incrementally?
+  * Do we even need a full R-tree? Or is some cursed hashmap structure based on index values enough?
+  * Resources:
+    * https://github.com/phill-holland/kdtree-pareto-front
+    * http://www.cse.cuhk.edu.hk/~taoyf/course/infs4205/lec/skyline.pdf
+    * https://www.sciencedirect.com/science/article/abs/pii/S0020025519306176
+    * https://static.aminer.org/pdf/PDF/000/211/201/on_the_computational_complexity_of_finding_the_maxima_of_a.pdf
+    * https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=6430ffb349e49560b9beced5d413216953c0ab35
+    * https://www.mdpi.com/2076-3417/10/19/6858
+    * https://www.comp.nus.edu.sg/~atung/publication/k_dominant.pdf
+    * https://users-cs.au.dk/gerth/papers/icalp11.pdf
+  * some rough stats: frontier.add adds a new state 70% of the time, and it only ever really deletes <2 states  
+
 * Early exit in dominance check
 * Optimize data structures
   * Frontier cache (with a dynamically scaling size depending on hit rates?)
