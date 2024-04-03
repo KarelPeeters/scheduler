@@ -26,11 +26,15 @@ pub struct Frontier<K, V> {
     first_index: Option<usize>,
     last_index: Option<usize>,
     pub dominance_calculations: u64,
+
+    pub count_add_try: u64,
+    pub count_add_success: u64,
+    pub count_add_removed: u64,
 }
 
 impl<K, V> Frontier<K, V> {
     pub fn new() -> Self {
-        Self { entries: vec![], first_index: None, last_index: None, dominance_calculations: 0 }
+        Self { entries: vec![], first_index: None, last_index: None, dominance_calculations: 0, count_add_try: 0, count_add_success: 0, count_add_removed: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -213,10 +217,13 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
             self.assert_valid();
         }
 
+        self.count_add_try += 1;
+
         let mut new_better_than_any_old = false;
         let mut any_old_better_than_new = false;
 
         let mut samples = 0;
+        let mut removed = 0;
 
         self.retain(|old, _| {
             samples += 1;
@@ -224,6 +231,7 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
                 DomDir::Better => {
                     // new is better, drop old
                     new_better_than_any_old = true;
+                    removed += 1;
                     RetainAction::ContinueRemove
                 }
                 DomDir::Worse | DomDir::Equal => {
@@ -237,6 +245,8 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
                 }
             }
         });
+        
+        self.count_add_removed += removed;
 
         // if any_old_better_than_new {
         //     println!("hit: {}", samples as f32 / self.len() as f32);
@@ -248,6 +258,7 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
         if !any_old_better_than_new {
             // no old was better or equal, we should add new
             self.add_entry(new.clone(), new_value(), false);
+            self.count_add_success += 1;
             true
         } else {
             false
@@ -290,7 +301,7 @@ impl<S: Copy> DomBuilder<S> {
 
     pub fn finish(&self) -> DomDir {
         match (self.any_better, self.any_worse) {
-            (true, true) => panic!("This should have been caught by dom_early_check!"),
+            (true, true) => DomDir::Incomparable,
             (true, false) => DomDir::Better,
             (false, true) => DomDir::Worse,
             (false, false) => DomDir::Equal,

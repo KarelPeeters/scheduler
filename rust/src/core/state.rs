@@ -58,6 +58,7 @@ pub struct Trigger<'s> {
     valid: bool,
 }
 
+// TODO add dead and unavailable here?
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValueState {
     AvailableNow {

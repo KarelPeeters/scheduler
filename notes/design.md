@@ -67,12 +67,16 @@
     * https://www.mdpi.com/2076-3417/10/19/6858
     * https://www.comp.nus.edu.sg/~atung/publication/k_dominant.pdf
     * https://users-cs.au.dk/gerth/papers/icalp11.pdf
-  * some rough stats: frontier.add adds a new state 70% of the time, and it only ever really deletes <2 states  
+    * https://cs.stackexchange.com/questions/141930/children-of-internal-node-in-a-quadtree-with-high-dimensionality
+      * https://tzaeschke.github.io/phtree-site/
+  * some rough stats: frontier.add adds a new state 70% of the time, and it only ever really deletes <2 states
+  * Switch to storing compact state keys instead of full state instances.
+    * Eg. a sorted index->float vector representing an index map? Or a compact hashmap implementation.
 
 * Early exit in dominance check
 * Optimize data structures
   * Frontier cache (with a dynamically scaling size depending on hit rates?)
-  * For starting operations: immediatly iterate only over actions that have actually been triggered?
+  * For starting operations: immediately iterate only over actions that have actually been triggered?
 * Support state undo actions
 * Rewrite in Rust
   * Bitsets for sets where possible.
