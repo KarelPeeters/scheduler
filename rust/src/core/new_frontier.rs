@@ -38,33 +38,33 @@ impl NewFrontier {
         assert_eq!(item.len(), self.dimensions);
         self.recurse_add(self.node_index_root, item, 0, None);
     }
-    
-    pub fn would_add(&self, item: &[f64]) -> (bool, usize) {
-        self.recurse_would_add(item, self.node_index_root)
+
+    // mostly equivalent to `would_add` and `add`
+    pub fn is_dominated_by_any(&self, item: &[f64]) -> (bool, usize) {
+        self.recurse_is_dominated_by_any(item, self.node_index_root)
     }
     
-    fn recurse_would_add(&self, item: &[f64], node_index: usize) -> (bool, usize) {
+    fn recurse_is_dominated_by_any(&self, item: &[f64], node_index: usize) -> (bool, usize) {
         match &self.nodes[node_index] {
             &Node::Branch { axis, value, node_index_lte, node_index_gt } => {
-                // TODO store min and max too in the branch node (or in all of them?)
+                // TODO store min and max too in the branch (or all) node, so we can skip even more?
                 // new, old
                 match item[axis].total_cmp(&value) {
                     Ordering::Less => {
-                        // we only need to check the upper branch
-                        self.recurse_would_add(item, node_index_gt)
+                        // we only need to check the lower branch
+                        self.recurse_is_dominated_by_any(item, node_index_lte)
                     },
                     Ordering::Greater | Ordering::Equal => {
-                        // we need to check both branches (with short circuiting for now,
-                        // TODO this short-circuiting go away once we need to remove old nodes)
-                        
-                        
-                        let (would_add, checked_lte) = self.recurse_would_add(item, node_index_lte);
-                        if !would_add {
-                            return (false, checked_lte);
-                        }
-                        
-                        let (would_add, checked_gt) = self.recurse_would_add(item, node_index_gt);
-                        return (would_add, checked_lte + checked_gt);
+                        // we need to check both branches
+                        let (dom_lte, checked_lte) = self.recurse_is_dominated_by_any(item, node_index_lte);
+                        let (dom_gte, checked_gt) = self.recurse_is_dominated_by_any(item, node_index_gt);
+
+                        // TODO enable or disable this? which approximates the real stats best?
+                        // if dom_lte {
+                        //     return (true, checked_lte);
+                        // }
+
+                        return (dom_lte || dom_gte, checked_lte + checked_gt);
                     }
                 }
             }
@@ -206,11 +206,11 @@ mod test {
                 println!("  max_depth={}", frontier.curr_max_depth);
                 
                 let mut total_checked = 0;
-                let start_would_add = Instant::now();
                 let tries = 10_000;
                 for _ in 0..tries {
                     let item = (0..dimensions).map(|_| rng.gen_range(0..1024) as f64).collect_vec();
-                    let (_, checked) = frontier.would_add(&item);
+                    let start_would_add = Instant::now();
+                    let (_, checked) = frontier.is_dominated_by_any(&item);
                     total_would_add += start_would_add.elapsed().as_secs_f64();
                     total_checked += checked;
                 }
