@@ -6,7 +6,7 @@ use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier: &Frontier<State, ()>, state: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -14,7 +14,7 @@ pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &Frontier<State, ()>, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &State) {}
 }
 
 pub struct Context<'p, 'r, 'f, R: Reporter> {
