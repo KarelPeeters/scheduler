@@ -6,7 +6,8 @@ use std::time::Instant;
 use itertools::{enumerate, Itertools};
 use ordered_float::OrderedFloat;
 
-use rust::core::frontier::{DomBuilder, DomDir, Frontier};
+use rust::core::frontier::{DomBuilder, DomDir, Dominance, FrontierVec};
+use rust::core::new_frontier::NewFrontier;
 use rust::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
@@ -89,7 +90,7 @@ struct CustomReporter {
 }
 
 impl Reporter for CustomReporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &FrontierVec<Cost, State>, cost: Cost, state: &State) {
         let index = self.next_index;
         self.next_index += 1;
 
@@ -110,7 +111,7 @@ impl Reporter for CustomReporter {
         frontier.write_svg_to_file("ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut FrontierVec<State, ()>, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % 1_000 == 0 {

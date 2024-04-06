@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use crate::core::frontier::Frontier;
+use crate::core::frontier::FrontierVec;
 
 use crate::core::problem::Problem;
 use crate::core::schedule::{Action};
@@ -173,7 +173,7 @@ fn pick_axis_ticks(max_value: f64, _max_ticks: usize) -> Vec<f64> {
     ticks
 }
 
-impl<V> Frontier<Cost, V> {
+impl<V> FrontierVec<Cost, V> {
     pub fn write_svg_to(&self, mut f: impl Write) -> std::io::Result<()> {
         let line = poloto::build::plot("frontier")
             .scatter(self.iter_arbitrary().map(|(&c, _)| (c.time, c.energy)));

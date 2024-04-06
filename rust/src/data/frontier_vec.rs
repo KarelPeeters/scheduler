@@ -1,18 +1,6 @@
 use std::collections::HashSet;
 
-// TODO better name for this type and the trait
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum DomDir {
-    Better,
-    Worse,
-    Equal,
-    Incomparable,
-}
-
-pub trait Dominance {
-    type Aux;
-    fn dominance(&self, other: &Self, aux: &Self::Aux) -> DomDir;
-}
+use crate::data::frontier::{DomDir, DominanceItem, Frontier};
 
 pub struct Entry<K, V> {
     key: K,
@@ -21,7 +9,7 @@ pub struct Entry<K, V> {
     next_index: Option<usize>,
 }
 
-pub struct Frontier<K, V> {
+pub struct FrontierVec<K, V> {
     entries: Vec<Entry<K, V>>,
     first_index: Option<usize>,
     last_index: Option<usize>,
@@ -32,13 +20,9 @@ pub struct Frontier<K, V> {
     pub count_add_removed: u64,
 }
 
-impl<K, V> Frontier<K, V> {
+impl<K, V> FrontierVec<K, V> {
     pub fn new() -> Self {
         Self { entries: vec![], first_index: None, last_index: None, dominance_calculations: 0, count_add_try: 0, count_add_success: 0, count_add_removed: 0 }
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
     }
 
     pub fn iter_arbitrary(&self) -> impl Iterator<Item=(&K, &V)> {
@@ -171,7 +155,7 @@ impl<K, V> Frontier<K, V> {
                 }
                 RetainAction::BreakMoveToFront => {
                     self.move_to_front(index);
-                    break
+                    break;
                 }
             };
         }
@@ -182,8 +166,19 @@ impl<K, V> Frontier<K, V> {
     }
 }
 
-impl<K: Dominance, V> Frontier<K, V>  {
-    pub fn would_add(&self, new: &K, aux: &K::Aux) -> bool {
+impl<K: DominanceItem, V> Frontier for FrontierVec<K, V> {
+    type Key = K;
+    type Value = V;
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn for_each(&self, f: impl FnMut(&Self::Key, &Self::Value)) {
+        self.iter_arbitrary().for_each(f)
+    }
+
+    fn would_add(&self, aux: &Self::Key::Aux, new: &Self::Key) -> bool {
         for (old, _) in self.iter_lru() {
             match new.dominance(old, aux) {
                 // new is better, we should add it
@@ -199,20 +194,8 @@ impl<K: Dominance, V> Frontier<K, V>  {
         // no old was better or equal, we should add new
         true
     }
-}
 
-#[derive(Debug, Copy, Clone)]
-enum RetainAction {
-    ContinueKeep,
-    ContinueRemove,
-    BreakMoveToFront,
-}
-
-impl<K: Dominance + Clone, V> Frontier<K, V>  {
-    // TODO cow or clarify in name that we might clone
-    // TODO clean this up, this signature is annoying, maybe change to (with #must_use)
-    //    if let Some(add) = self.prepare_add(new, aux) { add.finish(value) }
-    pub fn add(&mut self, new: &K, aux: &K::Aux, new_value: impl FnOnce() -> V) -> bool {
+    fn add(&mut self, aux: &Self::Key::Aux, new: &Self::Key, new_value: impl FnOnce() -> Self::Value) -> bool where Self::Key: Clone {
         if cfg!(debug_assertions) {
             self.assert_valid();
         }
@@ -245,7 +228,7 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
                 }
             }
         });
-        
+
         self.count_add_removed += removed;
 
         // if any_old_better_than_new {
@@ -266,57 +249,11 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
     }
 }
 
-#[derive(Debug)]
-pub struct DomBuilder<S> {
-    pub any_better: bool,
-    pub any_worse: bool,
-
-    self_value: S,
-    other_value: S,
-}
-
-impl<S: Copy> DomBuilder<S> {
-    pub fn new(self_value: S, other_value: S) -> Self {
-        DomBuilder {
-            any_better: false,
-            any_worse: false,
-            self_value,
-            other_value,
-        }
-    }
-
-    pub fn minimize<T: PartialOrd>(&mut self, f: impl Fn(S) -> T) {
-        match f(self.self_value).partial_cmp(&f(self.other_value)) {
-            Some(std::cmp::Ordering::Less) => self.any_better = true,
-            Some(std::cmp::Ordering::Greater) => self.any_worse = true,
-            Some(std::cmp::Ordering::Equal) => {}
-            // TODO require ord? but then comparing floats becomes annoying...
-            None => panic!("Cannot compare values"),
-        }
-    }
-
-    pub fn maximize<T: PartialOrd>(&mut self, f: impl Fn(S) -> T) {
-        self.minimize(|s| std::cmp::Reverse(f(s)));
-    }
-
-    pub fn finish(&self) -> DomDir {
-        match (self.any_better, self.any_worse) {
-            (true, true) => DomDir::Incomparable,
-            (true, false) => DomDir::Better,
-            (false, true) => DomDir::Worse,
-            (false, false) => DomDir::Equal,
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! dom_early_check {
-    ($dom: expr) => {{
-        let dom: &DomBuilder<_> = &$dom;
-        if dom.any_better && dom.any_worse {
-            return DomDir::Incomparable;
-        }
-    }}
+#[derive(Debug, Copy, Clone)]
+enum RetainAction {
+    ContinueKeep,
+    ContinueRemove,
+    BreakMoveToFront,
 }
 
 #[cfg(test)]
@@ -324,13 +261,14 @@ mod test {
     use itertools::Itertools;
     use rand::{Rng, SeedableRng};
     use rand::rngs::SmallRng;
+    use crate::data::frontier::Frontier;
 
-    use crate::core::frontier::{Frontier, RetainAction};
+    use crate::data::frontier_vec::{FrontierVec, RetainAction};
 
     // TODO fuzz testing
     #[test]
     fn basic() {
-        let mut frontier = Frontier::new();
+        let mut frontier = FrontierVec::new();
 
         frontier.add_entry(0, 0, true);
         frontier.add_entry(1, 1, true);
@@ -347,7 +285,7 @@ mod test {
 
     #[test]
     fn fuzz_test() {
-        let mut frontier = Frontier::new();
+        let mut frontier = FrontierVec::new();
         let mut rng = SmallRng::seed_from_u64(0);
 
         let max_size = 10;
@@ -391,7 +329,7 @@ mod test {
                             2 => {
                                 any_break = true;
                                 RetainAction::BreakMoveToFront
-                            },
+                            }
                             _ => unreachable!(),
                         }
                     });

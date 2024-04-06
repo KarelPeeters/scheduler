@@ -1,41 +1,47 @@
 use itertools::{Itertools, zip_eq};
 
-use crate::core::frontier::Frontier;
+use crate::core::new_frontier::NewFrontier;
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueState};
+use crate::data::frontier::Frontier;
+use crate::data::frontier_vec::FrontierVec;
 
 pub trait Reporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, state: &State);
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &FrontierVec<Cost, State>, cost: Cost, schedule: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut FrontierVec<State, ()>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
-    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &State) {}
+    fn report_new_schedule(&mut self, _: &Problem, _: &FrontierVec<Cost, State>, _: Cost, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &mut FrontierVec<State, ()>, _: &State) {}
 }
 
 pub struct Context<'p, 'r, 'f, R: Reporter> {
     problem: &'p Problem,
     reporter: &'r mut R,
-    frontier_done: &'f mut Frontier<Cost, State>,
-    frontier_partial: &'f mut Frontier<State, ()>,
+    frontier_done: &'f mut FrontierVec<Cost, State>,
+    frontier_partial: &'f mut FrontierVec<State, ()>,
+    frontier_new: &'f mut NewFrontier,
 }
 
 pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
-    let mut frontier_done = Frontier::new();
-    let mut frontier_partial = Frontier::new();
+    let state = State::new(problem);
+    
+    let mut frontier_done = FrontierVec::new();
+    let mut frontier_partial = FrontierVec::new();
+    let mut frontier_new = NewFrontier::new(state.dominance_key(problem).len(), 1);
 
     let mut ctx = Context {
         problem,
         reporter,
         frontier_done: &mut frontier_done,
         frontier_partial: &mut frontier_partial,
+        frontier_new: &mut frontier_new,
     };
 
-    let state = State::new(problem);
     recurse(&mut ctx, state);
 }
 
@@ -49,7 +55,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         assert_eq!(state.curr_time, state.minimum_time);
 
         let cost = state.current_cost();
-        let was_added = ctx.frontier_done.add(&cost, &(), || state.clone());
+        let was_added = ctx.frontier_done.add(&(), &cost, || state.clone());
         if was_added {
             ctx.reporter.report_new_schedule(problem, ctx.frontier_done, cost, &state);
         }
@@ -57,10 +63,22 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         return;
     }
 
-    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &()) {
+    if !ctx.frontier_done.would_add(&(), &state.best_case_cost(problem)) {
         return;
     }
-    if !ctx.frontier_partial.add(&state, problem, || ()) {
+    
+    let add_result = ctx.frontier_partial.add(problem, &state, || ());
+
+    let key = state.dominance_key(problem);
+    println!("{:?}", key);
+    println!("frontier len: {}", ctx.frontier_new.len());
+    let (new_add_result_not, checked) = ctx.frontier_new.is_dominated_by_any(&key);
+    let new_add_result = !new_add_result_not;
+    
+    println!("Checked: {}/{} = {}", checked, ctx.frontier_new.len(), checked as f64 / ctx.frontier_new.len() as f64);
+    assert_eq!(add_result, new_add_result);
+    
+    if !add_result {
         return;
     }
     ctx.reporter.report_new_state(problem, ctx.frontier_partial, &state);

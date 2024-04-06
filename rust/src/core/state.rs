@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::{chain, enumerate, zip_eq};
 
-use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait, TimeRange};
+use crate::data::frontier::TupleDominanceItem;
 use crate::dom_early_check;
 use crate::util::mini::{IterFloatExt, max_f64};
 
@@ -488,20 +488,22 @@ impl State {
         self.tried_allocs = tried_allocs;
     }
 
-    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> impl PartialOrd {
+    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> f64 {
         if self.value_remaining_unstarted_uses[value.0] == 0 {
             // dead, best possible case
-            return (0, 0.0);
+            return f64::NEG_INFINITY;
         }
 
         match self.value_mem_availability(value, mem) {
             // available now
-            Some(ValueState::AvailableNow { .. }) => (1, 0.0),
+            // TODO use current time here?
+            Some(ValueState::AvailableNow { .. }) => 0.0,
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => (2, -time),
+            Some(ValueState::AvailableAtTime(time)) => -time,
             // not even scheduled, worst case
-            None => (3, 0.0),
+            // TODO is that true? we could still decide to schedule it?
+            None => f64::INFINITY,
         }
     }
 }
@@ -568,7 +570,7 @@ impl Trigger<'_> {
     }
 }
 
-impl Dominance for State {
+impl TupleDominanceItem for State {
     type Aux = Problem;
 
     /// A state is better than another state if the second state can be reached from the first one
@@ -619,6 +621,62 @@ impl Dominance for State {
         //    => combine both into a "future memory space" temporal sequence?
 
         dom.finish()
+    }
+
+    fn dominance_tuple_len(&self, problem: &Problem) -> usize {
+        3 + problem.hardware.groups().len() + problem.hardware.memories().len() * problem.graph.nodes().len()
+    }
+
+    fn get_axis_minimize(&self, problem: &Problem, index: usize) -> f64 {
+        match index {
+            0 => self.curr_time,
+            1 => self.minimum_time,
+            2 => self.curr_energy,
+            _ => {
+                let group_count = problem.hardware.groups().len();
+                let node_count = problem.graph.nodes().len();
+
+                if index < 3 + group_count {
+                    let group = Group(index - 3);
+                    match self.state_group[group.0] {
+                        None => self.curr_time,
+                        Some(action) => action.time().end,
+                    }
+                } else {
+                    let value = Node((index - 3 - group_count) % node_count);
+                    let mem = Memory((index - 3 - group_count) / node_count);
+                    self.value_mem_dom_key_min(value, mem)
+                }
+            }
+        
+        }
+    }
+}
+
+impl State {
+    pub fn dominance_key(&self, problem: &Problem) -> Vec<f64> {
+        let mut result = vec![];
+        
+        
+        result.push(self.curr_time);
+        result.push(self.minimum_time);
+        result.push(self.curr_energy);
+        
+        for group in self.state_group.iter() {
+            let v = match group {
+                None => self.curr_time,
+                Some(action) => action.time().end,
+            };
+            result.push(v);
+        }
+        
+        for mem in problem.hardware.memories() {
+            for value in problem.graph.nodes() {
+                result.push(self.value_mem_dom_key_min(value, mem));
+            }
+        }
+        
+        result
     }
 }
 
