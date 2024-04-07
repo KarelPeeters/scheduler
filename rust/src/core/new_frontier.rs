@@ -114,7 +114,7 @@ impl NewFrontier {
     pub fn add_if_not_dominated(&mut self, new: Vec<f64>) -> bool {
         assert_eq!(new.len(), self.dimensions);
 
-        // check if any old dominates new and remove dominated old entries 
+        // check if any old dominates new and remove dominated old entries
         if let Some(root_node) = std::mem::take(&mut self.root_node) {
             let (any_old_dom, new_root_node) = self.recurse_drop_and_check_dom(root_node, &new, false, false);
             self.root_node = new_root_node;
@@ -125,7 +125,7 @@ impl NewFrontier {
         }
 
         // insert the new entry
-        // TODO move method to Node struct to make lifetimes easier 
+        // TODO move method to Node struct to make lifetimes easier
         match std::mem::take(&mut self.root_node) {
             None => {
                 self.root_node = Some(Box::new(Node::Leaf(vec![new])));
@@ -159,7 +159,7 @@ impl NewFrontier {
     fn recurse_drop_and_check_dom(&mut self, node: Box<Node>, new: &[f64], branch_new_any_better: bool, branch_new_any_worse: bool) -> (bool, Option<Box<Node>>) {
         // TODO move this up one level and turn this into an assert?
         if branch_new_any_better && branch_new_any_worse {
-            println!("add incomparable, give up");
+            // println!("add incomparable, give up");
             return (
                 // no old dominating found
                 false,
@@ -175,31 +175,45 @@ impl NewFrontier {
 
         match node {
             Node::Branch { axis, key, node_left, node_right } => {
-                // let _value = new[axis];
+                let new_key = new[axis];
 
-                let (exit_left, node_left) = self.recurse_drop_and_check_dom(node_left, new, branch_new_any_better, branch_new_any_worse);
-                let (exit_right, node_right) = self.recurse_drop_and_check_dom(node_right, new, branch_new_any_better, branch_new_any_worse);
-
-                // TODO change this to be early exit instead of assert
-                let exit_any = exit_left || exit_right;
+                let (exit_left, node_left) = self.recurse_drop_and_check_dom(
+                    node_left,
+                    new,
+                    branch_new_any_better,
+                    branch_new_any_worse || key < new_key,
+                );
+                
+                if exit_left {
+                    let node_left = node_left.unwrap();
+                    
+                    // reuse the existing box
+                    *node_box = Node::Branch { axis, key, node_left, node_right };
+                    return (true, Some(node_box));
+                }
+                
+                let (exit_right, node_right) = self.recurse_drop_and_check_dom(
+                    node_right,
+                    new,
+                    branch_new_any_better || new_key < key,
+                    branch_new_any_worse
+                );
 
                 match (node_left, node_right) {
                     (Some(node_left), Some(node_right)) => {
                         // reuse the existing box
                         *node_box = Node::Branch { axis, key, node_left, node_right };
-                        (exit_any, Some(node_box))
+                        (exit_right, Some(node_box))
                     },
                     (Some(node_left), None) => {
                         assert!(!exit_right);
-                        (exit_any, Some(node_left))
+                        (false, Some(node_left))
                     },
                     (None, Some(node_right)) => {
-                        assert!(!exit_left);
-                        (exit_any, Some(node_right))
+                        (exit_right, Some(node_right))
                     },
                     (None, None) => {
-                        assert!(!exit_any);
-                        (exit_any, None)
+                        (false, None)
                     }
                 }
             }
@@ -210,12 +224,12 @@ impl NewFrontier {
                 entries.retain(|old| {
                     match vec_dominance(new, old) {
                         DomDir::Better => {
-                            println!("dropping {:?}", old);
+                            // println!("dropping {:?}", old);
                             false
                         },
                         DomDir::Worse | DomDir::Equal => {
                             // TODO early exit
-                            println!("not adding because of dominating {:?}", old);
+                            // println!("not adding because of dominating {:?}", old);
                             any_old_dom_or_eq = true;
                             true
                         }
@@ -245,15 +259,15 @@ impl NewFrontier {
         match &mut **node {
             &mut Node::Branch { axis, key: value, ref mut node_left, ref mut node_right } => {
                 if item[axis] <= value {
-                    println!("recurse_add left");
+                    // println!("recurse_add left");
                     self.recurse_add(node_left, item, depth + 1, Some(axis))
                 } else {
-                    println!("recurse_add right");
+                    // println!("recurse_add right");
                     self.recurse_add(node_right, item, depth + 1, Some(axis))
                 }
             }
             Node::Leaf(ref mut values) => {
-                println!("recurse_add leaf");
+                // println!("recurse_add leaf");
                 values.push(item);
 
                 if values.len() > self.max_leaf_len {
@@ -276,7 +290,7 @@ impl NewFrontier {
         for axis in start_axis..self.dimensions {
             if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
                 let key = entries[pivot - 1][axis];
-                println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
+                // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
 
                 // TODO reclaim values capacity?
                 let entries_right = entries.split_off(pivot);
@@ -361,7 +375,7 @@ impl NewFrontier {
                 // ranges must respect key
                 let range_left = self.get_subtree_axis_value_range(node_left, axis).unwrap();
                 let range_right = self.get_subtree_axis_value_range(node_right, axis).unwrap();
-                println!("left range: {:?}, right range: {:?}", range_left, range_right);
+                // println!("left range: {:?}, right range: {:?}", range_left, range_right);
 
                 assert!(!range_left.is_empty());
                 assert!(!range_right.is_empty());
@@ -458,7 +472,7 @@ impl Dominance for Vec<f64> {
 
     fn dominance(&self, other: &Self, _: &()) -> DomDir {
         assert_eq!(self.len(), other.len());
-        
+
         let mut dom = DomBuilder::new(self, other);
         for i in 0..self.len() {
             dom.minimize(|v| v[i]);
@@ -470,6 +484,7 @@ impl Dominance for Vec<f64> {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
     use itertools::Itertools;
     use rand::{Rng, SeedableRng};
     use rand::rngs::SmallRng;
@@ -482,29 +497,50 @@ mod test {
 
     #[test]
     fn correctness() {
-        let dimensions = 512;
-        let max_leaf_len = 8;
-        let n = 1024;
+        let dimensions = 256;
+        let max_leaf_len = 1;
+        let n = 1024*32;
 
         let mut rng = SmallRng::seed_from_u64(0);
         let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
-        
+
         let mut baseline  = Frontier::new();
+        
+        
+        let mut total_gen = 0.0;
+        let mut total_add_new = 0.0;
+        let mut total_add_old = 0.0;
 
         for _ in 0..n {
             // frontier.print(usize::MAX);
             // frontier.assert_valid();
 
+            println!("Frontier length={}", frontier.len);
+
+            let start_gen = Instant::now();
             let value = (0..dimensions).map(|_| rng.gen_range(0.0..1.0)).collect_vec();
-            println!("Adding {:?}", value);
-            
+            total_gen += start_gen.elapsed().as_secs_f64();
+            // println!("Adding {:?}", value);
+
+            let start_old = Instant::now();
             let added_base = baseline.add(&value, &(), || ());
-            
+            total_add_old += start_old.elapsed().as_secs_f64();
+
+            let start_new = Instant::now();
             let added = frontier.add_if_not_dominated(value);
-            println!("{}", added);
+            total_add_new += start_new.elapsed().as_secs_f64();
             
             assert_eq!(added, added_base);
+            assert_eq!(frontier.len(), baseline.len());
         }
+        
+        println!("Times:");
+        println!("  gen=     {}s", total_gen);
+        println!("  add_old= {}s", total_add_old);
+        println!("  add_new= {}s", total_add_new);
+
+        let depths = format!("{:?}", frontier.collect_entry_depths());
+        std::fs::write("ignored/depths.txt", &depths).unwrap();
     }
 
     #[test]
@@ -512,22 +548,22 @@ mod test {
         // let dimensions = 512;
         // let max_leaf_len = 1;
         // let n = 1_000_000;
-        // 
+        //
         // let mut rng = SmallRng::seed_from_u64(0);
         // let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
-        // 
+        //
         // let start = Instant::now();
         // let mut total_would_add = 0.0;
         // let mut total_add = 0.0;
-        // 
+        //
         // for i in 0..n {
         //     if i % 100_000 == 0 {
         //         println!("progress={}", i as f64 / n as f64);
-        // 
+        //
         //         println!("  took {}s (add {}s)", start.elapsed().as_secs_f64(), total_add);
         //         println!("  nodes={}, nodes/value={}", frontier.len(), frontier.len() as f64 / i as f64);
         //         println!("  max_depth={}", frontier.curr_max_depth);
-        // 
+        //
         //         let mut total_checked = 0;
         //         let tries = 10_000;
         //         for _ in 0..tries {
@@ -535,24 +571,24 @@ mod test {
         //                 // TODO test fixed-unlucky/bad axes
         //                 rng.gen_range(0..5) as f64
         //             }).collect_vec();
-        // 
+        //
         //             let start_would_add = Instant::now();
         //             let (_, checked) = frontier.is_dominated_by_any(&item);
         //             total_would_add += start_would_add.elapsed().as_secs_f64();
         //             total_checked += checked;
         //         }
-        // 
+        //
         //         let average_checked = total_checked as f64 / tries as f64;
         //         let fraction_checked = average_checked / i as f64;
         //         println!("  would_add total took {}s, average checks={}, fraction checked={}", total_would_add, average_checked, fraction_checked);
         //     }
-        // 
+        //
         //     let item = (0..dimensions).map(|_| rng.gen_range(0..1024) as f64).collect_vec();
-        // 
+        //
         //     let start_add = Instant::now();
         //     frontier.add(item);
         //     total_add += start_add.elapsed().as_secs_f64();
-        // 
+        //
         //     frontier.print(usize::MAX);
         //     frontier.assert_valid();
         // }
