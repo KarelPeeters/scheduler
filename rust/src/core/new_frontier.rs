@@ -1,5 +1,6 @@
-use std::cmp::max;
+use std::cmp::Ordering;
 use std::ops::RangeInclusive;
+
 use itertools::chain;
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
@@ -8,14 +9,9 @@ use crate::util::mini::{max_f64, min_f64};
 
 pub struct NewFrontier {
     dimensions: usize,
-    max_leaf_len: usize,
-
-    // TODO can we do something faster than this?
-    // TODO box?
-    root_node: Option<Box<Node>>,
-
     len: usize,
-    curr_max_depth: usize,
+    // TODO is doig our own indexing and garbage collection faster?
+    root_node: Option<Box<Node>>,
 }
 
 // TODO custom drop implementation that doesn't recurse as much?
@@ -31,7 +27,7 @@ enum Node {
         /// entries with `key < value`
         node_right: Box<Node>,
     },
-    Leaf(Vec<Vec<f64>>),
+    Leaf(Vec<f64>),
 }
 
 // TODO use this instead of bool
@@ -47,12 +43,11 @@ enum Node {
 
 impl NewFrontier {
     pub fn new(dimensions: usize, max_leaf_len: usize) -> Self {
+        assert_eq!(max_leaf_len, 1);
         Self {
             dimensions,
-            max_leaf_len,
-            root_node: None,
             len: 0,
-            curr_max_depth: 1,
+            root_node: None,
         }
     }
 
@@ -71,9 +66,7 @@ impl NewFrontier {
         self.for_each_node(|depth, node| {
             match node {
                 Node::Branch { .. } => {}
-                Node::Leaf(entries) => {
-                    entries.iter().for_each(|e| f(depth, e))
-                }
+                Node::Leaf(e) => f(depth, e),
             }
         })
     }
@@ -82,9 +75,7 @@ impl NewFrontier {
         self.recurse_for_each_node(node, depth, &mut |_, node| {
             match node {
                 Node::Branch { .. } => {}
-                Node::Leaf(entries) => {
-                    entries.iter().for_each(|e| f(depth, e))
-                }
+                Node::Leaf(e) => f(depth, e),
             }
         })
     }
@@ -127,7 +118,7 @@ impl NewFrontier {
         // TODO move method to Node struct to make lifetimes easier
         match std::mem::take(&mut self.root_node) {
             None => {
-                self.root_node = Some(Box::new(Node::Leaf(vec![new])));
+                self.root_node = Some(Box::new(Node::Leaf(new)));
             }
             Some(mut root_node) => {
                 self.recurse_add(&mut root_node, new, 0, None);
@@ -213,98 +204,105 @@ impl NewFrontier {
                     }
                 }
             }
-            Node::Leaf(mut entries) => {
-                let mut any_old_dom_or_eq = false;
-                let len_before = entries.len();
-
-                entries.retain(|old| {
-                    match vec_dominance(new, old) {
-                        DomDir::Better => {
-                            // println!("dropping {:?}", old);
-                            false
-                        },
-                        DomDir::Worse | DomDir::Equal => {
-                            // TODO early exit
-                            // println!("not adding because of dominating {:?}", old);
-                            any_old_dom_or_eq = true;
-                            true
-                        }
-                        DomDir::Incomparable => true,
+            Node::Leaf(old) => {
+                match vec_dominance(new, &old) {
+                    DomDir::Better => {
+                        // drop old
+                        self.len -= 1;
+                        (false, None)
+                    },
+                    DomDir::Worse | DomDir::Equal => {
+                        // report that new is dominated, keep old
+                        // (reuse the existing box)
+                        *node_box = Node::Leaf(old);
+                        (true, Some(node_box))
                     }
-                });
-
-                let len_after = entries.len();
-                self.len -= len_before - len_after;
-
-                let node = if len_after == 0 {
-                    assert!(!any_old_dom_or_eq);
-                    None
-                } else {
-                    // reuse the existing box
-                    *node_box = Node::Leaf(entries);
-                    Some(node_box)
-                };
-
-                (any_old_dom_or_eq, node)
+                    DomDir::Incomparable => {
+                        // report that new is not dominated, keep old
+                        // (reuse the existing box)
+                        *node_box = Node::Leaf(old);
+                        (false, Some(node_box))
+                    },
+                }
             }
         }
     }
 
     // TODO remove self from some of these functions
-    fn recurse_add(&mut self, node: &mut Box<Node>, item: Vec<f64>, depth: usize, prev_axis: Option<usize>) {
+    fn recurse_add(&mut self, node: &mut Box<Node>, new: Vec<f64>, depth: usize, prev_axis: Option<usize>) {
         match &mut **node {
             &mut Node::Branch { axis, key: value, ref mut node_left, ref mut node_right } => {
-                if item[axis] <= value {
+                if new[axis] <= value {
                     // println!("recurse_add left");
-                    self.recurse_add(node_left, item, depth + 1, Some(axis))
+                    self.recurse_add(node_left, new, depth + 1, Some(axis))
                 } else {
                     // println!("recurse_add right");
-                    self.recurse_add(node_right, item, depth + 1, Some(axis))
+                    self.recurse_add(node_right, new, depth + 1, Some(axis))
                 }
             }
-            Node::Leaf(ref mut values) => {
-                // println!("recurse_add leaf");
-                values.push(item);
+            Node::Leaf(old) => {
+                let old = std::mem::take(old);
 
-                if values.len() > self.max_leaf_len {
-                    let values = std::mem::take(values);
-                    let new_node = self.split(values, prev_axis);
-                    **node = new_node;
-                    self.curr_max_depth = max(self.curr_max_depth, depth + 1);
+                // determine axes to try
+                let start_axis = prev_axis.map_or(0, |axis| (axis + 1) % self.dimensions);
+                let axis_iter = chain(start_axis..self.dimensions, 0..start_axis);
+
+                // pick axis
+                for axis in axis_iter {
+                    let (left, right) = match new[axis].total_cmp(&old[axis]) {
+                        Ordering::Equal => continue,
+                        Ordering::Less => (new, old),
+                        Ordering::Greater => (old, new),
+                    };
+                    let key = left[axis];
+
+                    let node_left = Box::new(Node::Leaf(left));
+                    let node_right = Box::new(Node::Leaf(right));
+
+                    **node = Node::Branch {
+                        axis,
+                        key,
+                        node_left,
+                        node_right,
+                    };
+                    return;
                 }
+
+                panic!("failed to find any split axis, are there identical tuples?")
             }
         }
     }
 
-    fn split(&mut self, mut entries: Vec<Vec<f64>>, prev_axis: Option<usize>) -> Node {
-        assert!(entries.len() > 1);
-
-        let start_axis = prev_axis.map_or(0, |axis| (axis + 1) % entries[0].len());
-
-        // TODO what if we fail to split? this can't happen in dominance luckily enough
-
-        for axis in chain(start_axis..self.dimensions, 0..start_axis) {
-            if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
-                let key = entries[pivot][axis];
-                // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
-
-                // TODO reclaim values capacity?
-                let entries_right = entries.split_off(pivot);
-
-                let node_left = Box::new(Node::Leaf(entries));
-                let node_right = Box::new(Node::Leaf(entries_right));
-
-                return Node::Branch {
-                    axis,
-                    key,
-                    node_left,
-                    node_right,
-                };
-            }
-        }
-
-        panic!("failed to find any split axis, are there identical tuples?")
-    }
+    // TODO use again or delete
+    // fn split(&mut self, mut entries: Vec<Vec<f64>>, prev_axis: Option<usize>) -> Node {
+    //     assert!(entries.len() > 1);
+    //
+    //     let start_axis = prev_axis.map_or(0, |axis| (axis + 1) % entries[0].len());
+    //
+    //     // TODO what if we fail to split? this can't happen in dominance luckily enough
+    //
+    //     for axis in chain(start_axis..self.dimensions, 0..start_axis) {
+    //         if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
+    //             let key = entries[pivot][axis];
+    //             // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
+    //
+    //             // TODO reclaim values capacity?
+    //             let entries_right = entries.split_off(pivot);
+    //
+    //             let node_left = Box::new(Node::Leaf(entries));
+    //             let node_right = Box::new(Node::Leaf(entries_right));
+    //
+    //             return Node::Branch {
+    //                 axis,
+    //                 key,
+    //                 node_left,
+    //                 node_right,
+    //             };
+    //         }
+    //     }
+    //
+    //     panic!("failed to find any split axis, are there identical tuples?")
+    // }
 
     pub fn print(&self, max_depth: usize) {
         println!("tree len={}", self.len);
@@ -388,10 +386,7 @@ impl NewFrontier {
                 self.recurse_assert_valid(node_left);
                 self.recurse_assert_valid(node_right);
             }
-            Node::Leaf(ref values) => {
-                // leafs must be nonempty and can't be too large
-                assert!(0 < values.len() && values.len() <= self.max_leaf_len, "Invalid leaf length {}", values.len());
-            }
+            Node::Leaf(_) => {}
         }
     }
 
@@ -420,6 +415,8 @@ impl NewFrontier {
     }
 }
 
+// TODO start using again or remove
+#[allow(unused)]
 fn sort_pick_pivot(axis: usize, slice: &mut [Vec<f64>]) -> Option<usize> {
     let cmp = |a: &Vec<f64>, b: &Vec<f64>| a[axis].total_cmp(&b[axis]);
     slice.sort_unstable_by(cmp);
@@ -491,7 +488,7 @@ mod test {
 
     use crate::core::frontier::Frontier;
     use crate::core::new_frontier::NewFrontier;
-    
+
     #[test]
     fn correctness() {
         let dimensions = 8;
