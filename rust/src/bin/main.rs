@@ -79,7 +79,9 @@ fn main_solver(problem: &Problem) {
         start: Instant::now(),
     };
 
+    let start = Instant::now();
     solve(&problem, &mut reporter);
+    println!("Solver took {:?}s", start.elapsed().as_secs_f64());
 }
 
 struct CustomReporter {
@@ -128,56 +130,6 @@ impl Reporter for CustomReporter {
             let index = self.next_index;
             self.next_index += 1;
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
-
-            // group by a couple of keys
-            let key = |s: &State| {
-
-                let mut vk = vec![];
-                for node in problem.graph.nodes() {
-                    for mem in problem.hardware.memories() {
-                        let available = s.value_available_in_mem_now(node, mem);
-                        let dead = s.value_remaining_unstarted_uses[node.0] == 0;
-                        vk.push(available || dead);
-                    }
-                }
-
-                // let k = (OrderedFloat(s.curr_time), OrderedFloat(s.minimum_time), OrderedFloat(s.curr_energy), vk);
-                let k = (OrderedFloat(s.curr_time), OrderedFloat(s.minimum_time), OrderedFloat(s.curr_energy));
-                // println!("{:?}", k);
-                k
-            };
-            let mut groups = HashMap::new();
-            for (s, _) in frontier.iter_arbitrary() {
-                groups.entry(key(s)).or_insert_with(Vec::new).push(s);
-            }
-
-            // how many groups would this state need to check?
-            let mut checked_groups = 0;
-            let mut checked_states = 0;
-            for g in groups.keys() {
-                let k = key(state);
-
-                let mut check = DomBuilder::new(&k, g);
-                check.minimize(|x| x.0);
-                check.minimize(|x| x.1);
-                check.minimize(|x| x.2);
-                // for v in 0..k.3.len() {
-                //     check.maximize(|x| x.3[v])
-                // }
-                match check.finish() {
-                    DomDir::Better | DomDir::Worse | DomDir::Equal => {
-                        checked_groups += 1;
-                        checked_states += groups[g].len();
-                    }
-                    DomDir::Incomparable => {}
-                }
-            }
-
-            println!("grouped:");
-            println!("  len={}", groups.len());
-            println!("  size_range={:?}", groups.values().map(|v| v.len()).minmax());
-            println!("  checked_groups={}", checked_groups);
-            println!("  checked_states={}", checked_states);
         }
     }
 }
@@ -193,6 +145,11 @@ fn build_problem() -> Problem {
     let energy_chip = 1.0;
     let alloc_time = 4000.0;
     let alloc_energy = 100.0;
+    let alloc_time_energy_factors = vec![
+        ("mid", 1.0, 1.0),
+        // ("efficient", 1.5, 0.5),
+        // ("fast", 0.8, 2.0),
+    ];
 
     let graph_depth = 4;
     let graph_branching = 2;
@@ -270,35 +227,17 @@ fn build_problem() -> Problem {
     let mut allocations = vec![];
     for (i, &core_group) in enumerate(&core_groups) {
         for node in graph.nodes() {
-            allocations.push(AllocationInfo {
-                id: "efficient".to_string(),
-                group: core_group,
-                node,
-                input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
-                output_memory: mem_core[i],
-                time: alloc_time * 1.5,
-                energy: alloc_energy * 0.5,
-            });
-
-            allocations.push(AllocationInfo {
-                id: "mid".to_string(),
-                group: core_group,
-                node,
-                input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
-                output_memory: mem_core[i],
-                time: alloc_time,
-                energy: alloc_energy,
-            });
-
-            allocations.push(AllocationInfo {
-                id: "fast".to_string(),
-                group: core_group,
-                node,
-                input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
-                output_memory: mem_core[i],
-                time: alloc_time * 0.8,
-                energy: alloc_energy * 2.0,
-            })
+            for &(name, time_factor, energy_factor) in &alloc_time_energy_factors {
+                allocations.push(AllocationInfo {
+                    id: name.to_string(),
+                    group: core_group,
+                    node,
+                    input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
+                    output_memory: mem_core[i],
+                    time: alloc_time * time_factor,
+                    energy: alloc_energy * energy_factor,
+                });
+            }
         }
     }
 

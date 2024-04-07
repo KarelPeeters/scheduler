@@ -496,10 +496,11 @@ impl State {
 
         match self.value_mem_availability(value, mem) {
             // available now
+            // TODO use current time here?
             Some(ValueState::AvailableNow { .. }) => (1, 0.0),
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => (2, -time),
+            Some(ValueState::AvailableAtTime(time)) => (2, time),
             // not even scheduled, worst case
             None => (3, 0.0),
         }
