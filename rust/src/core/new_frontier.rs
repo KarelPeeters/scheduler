@@ -285,7 +285,7 @@ impl NewFrontier {
 
         for axis in chain(start_axis..self.dimensions, 0..start_axis) {
             if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
-                let key = entries[pivot - 1][axis];
+                let key = entries[pivot][axis];
                 // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
 
                 // TODO reclaim values capacity?
@@ -428,8 +428,8 @@ fn sort_pick_pivot(axis: usize, slice: &mut [Vec<f64>]) -> Option<usize> {
     let mut best_dist = usize::MAX;
 
     // TODO iterate starting at center
-    for i in 1..slice.len() {
-        if cmp(&slice[i], &slice[i - 1]).is_eq() {
+    for i in 0..slice.len()-1 {
+        if cmp(&slice[i], &slice[i + 1]).is_eq() {
             continue;
         }
 
@@ -491,10 +491,7 @@ mod test {
 
     use crate::core::frontier::Frontier;
     use crate::core::new_frontier::NewFrontier;
-
-    #[test]
-    fn pivot() {}
-
+    
     #[test]
     fn correctness() {
         let dimensions = 8;
