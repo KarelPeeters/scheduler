@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-use itertools::{chain, enumerate};
+use itertools::{chain, enumerate, Itertools};
 use rand::{Rng, thread_rng};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
@@ -29,7 +30,7 @@ pub struct SparseVecPairIterator<'l, 'r> {
 
 impl SparseVec {
     // TODO configurable default, either through field or generic?
-    const DEFAULT: f64 = f64::NEG_INFINITY;
+    const DEFAULT: f64 = f64::INFINITY;
 
     pub fn new() -> Self {
         SparseVec { entries: vec![] }
@@ -196,12 +197,59 @@ impl NewFrontier {
             Node::Leaf(_) => {}
         }
     }
+    
+    fn mask(&self, vec: &SparseVec) -> Vec<u8> {
+        (0..self.dimensions).map(|i| {
+            let v = vec.get(i);
+            if v == f64::NEG_INFINITY {
+                0
+            } else if v == f64::INFINITY {
+                2
+            } else {
+                1
+            }
+        }).collect_vec()
+    }
 
     // TODO explicit stack vs recursion?
     // TODO state ptr vs arg+return
     // TODO rename: add and drop dominated
     #[inline(never)]
     pub fn add_if_not_dominated(&mut self, new: SparseVec) -> bool {
+        // if self.len() % 1000 == 0 {
+        //     // test how well sparse masking would work
+        // 
+        //     let mut entries = vec![];
+        //     self.for_each_entry(|_, e| entries.push(e));
+        // 
+        //     let mut groups = HashMap::new();
+        //     for &e in &entries {
+        //         // let indices = e.entries.iter().map(|&(k, v)| k).collect_vec();
+        //         groups.entry(self.mask(e)).or_insert_with(Vec::new).push(e);
+        //     }
+        // 
+        //     println!("frontier sparse:");
+        //     println!("  groups: {}", groups.len());
+        //     // println!("  group sizes: {:?}", groups.values().map(Vec::len).minmax());
+        //     println!("  group sizes: {:?}", groups.values().map(Vec::len).collect_vec());
+        // 
+        //     let mut maybe_comparable_groups = 0;
+        //     let mut maybe_comparable_entries = 0;
+        //     for k in groups.keys() {
+        //         
+        //         // let any_extra_key = new.entries.iter().any(|&(x, _)| !k.contains(&x));
+        //         // let any_missing_key = k.iter().any(|&x| new.get(x) == SparseVec::DEFAULT);
+        //         
+        //         let dom = self.mask(&new).dominance(k, &());
+        //         if dom != DomDir::Incomparable {
+        //             maybe_comparable_groups += 1;
+        //             maybe_comparable_entries += groups.get(k).unwrap().len();
+        //         }
+        //     }
+        //     println!("  maybe comparable groups: {}/{} = {}", maybe_comparable_groups, groups.len(), maybe_comparable_groups as f64 / groups.len() as f64);
+        //     println!("  maybe comparable entries: {}/{} = {}", maybe_comparable_entries, entries.len(), maybe_comparable_entries as f64 / entries.len() as f64);
+        // }
+
         // check if any old dominates new and remove dominated old entries
         let mut entries_checked = 0;
         if let Some(root_node) = std::mem::take(&mut self.root_node) {
@@ -563,7 +611,7 @@ fn sort_pick_pivot(axis: usize, slice: &mut [SparseVec]) -> Option<usize> {
     pivot_index
 }
 
-impl Dominance for Vec<f64> {
+impl<T: PartialOrd> Dominance for Vec<T> {
     type Aux = ();
 
     #[inline(never)]
@@ -573,7 +621,7 @@ impl Dominance for Vec<f64> {
 
         let mut builder = DomBuilder::new(self, other);
         for i in 0..len {
-            builder.minimize(|x| x[i]);
+            builder.minimize(|x| &x[i]);
             dom_early_check!(builder);
         }
         builder.finish()

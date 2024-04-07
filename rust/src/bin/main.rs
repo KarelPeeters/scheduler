@@ -26,24 +26,24 @@ fn main() {
 fn main_milp(problem: &Problem) {
     let mut max_time = 0.0;
     let mut deltas = HashSet::new();
-    
+
     for alloc in &problem.allocation_info {
         deltas.insert(OrderedFloat(alloc.time));
     }
     for node in problem.graph.nodes() {
         let node_info = &problem.graph.node_info[node.0];
-        
+
         for channel in &problem.hardware.channel_info {
             let channel_value_delta = channel.time_to_transfer(node_info.size_bits);
             deltas.insert(OrderedFloat(channel_value_delta));
-            
+
             // TODO we may need to copy some values across a channel multiple times, so this is not a perfect bound
             max_time += channel_value_delta;
         }
-        
+
         max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min_f64().unwrap();
     }
-    
+
     // collect all possible times
     // TODO upper bound for this?
     let mut visited = HashSet::new();
@@ -53,7 +53,7 @@ fn main_milp(problem: &Problem) {
         if time_curr > max_time {
             continue
         }
-        
+
         if !visited.insert(OrderedFloat(time_curr)) {
             continue
         }
@@ -111,7 +111,7 @@ impl Reporter for CustomReporter {
         for (i, (_, state)) in enumerate(frontier_pairs) {
             state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
         }
-        
+
         for (&cost, _) in frontier.iter_arbitrary() {
             if !self.old_frontier_costs.contains(&cost) {
                 self.old_frontier_costs.push(cost);
@@ -146,7 +146,7 @@ impl Reporter for CustomReporter {
                 let depths = format!("{:?}", frontier_new.collect_entry_depths());
                 std::fs::write("ignored/depths.txt", &depths).unwrap();
             }
-            
+
             let index = self.next_index;
             self.next_index += 1;
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
@@ -223,11 +223,11 @@ fn build_problem() -> Problem {
     let mut prev = vec![node_input];
     for i_depth in 0..graph_depth {
         let next = (0..graph_branching).map(|i_branch| {
-           let inputs = if graph_cross || i_depth == 0 {
-               prev.clone()
-           } else {
-               vec![prev[i_branch]]
-           };
+            let inputs = if graph_cross || i_depth == 0 {
+                prev.clone()
+            } else {
+                vec![prev[i_branch]]
+            };
             graph.add_node(NodeInfo {
                 id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
                 size_bits: graph_node_size,
