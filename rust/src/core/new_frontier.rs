@@ -183,15 +183,12 @@ impl NewFrontier {
                     branch_new_any_better,
                     branch_new_any_worse || key < new_key,
                 );
-                
                 if exit_left {
                     let node_left = node_left.unwrap();
-                    
                     // reuse the existing box
                     *node_box = Node::Branch { axis, key, node_left, node_right };
                     return (true, Some(node_box));
                 }
-                
                 let (exit_right, node_right) = self.recurse_drop_and_check_dom(
                     node_right,
                     new,
@@ -311,7 +308,7 @@ impl NewFrontier {
     }
 
     pub fn print(&self, max_depth: usize) {
-        println!("Tree:");
+        println!("tree len={}", self.len);
 
         match &self.root_node {
             None => println!("  empty"),
@@ -325,14 +322,14 @@ impl NewFrontier {
         let indent = (depth + 1) * 2;
         match *node {
             Node::Branch { axis, key: value, ref node_left, ref node_right } => {
-                println!("{:indent$}axis={} value={}", "", axis, value);
+                println!("{:indent$}branch len={}, axis={}, value={}", "", self.get_subtree_entry_count(node), axis, value);
                 if depth < max_depth {
                     self.recurse_print(node_left, depth + 1, max_depth);
                     self.recurse_print(node_right, depth + 1, max_depth);
                 }
             }
             Node::Leaf(ref entries) => {
-                println!("{:indent$}leaf len={} entries={:?}", "", entries.len(), entries);
+                println!("{:indent$}leaf len={}", "", entries.len());
             }
         }
     }
@@ -368,6 +365,9 @@ impl NewFrontier {
     fn recurse_assert_valid(&self, node: &Node) {
         match *node {
             Node::Branch { axis, key, ref node_left, ref node_right } => {
+                // counts must match
+                assert_eq!(self.get_subtree_entry_count(node), self.get_subtree_entry_count(node_left) + self.get_subtree_entry_count(node_right));
+                
                 // both branches must be nonempty
                 assert!(self.get_subtree_entry_count(node_left) > 0);
                 assert!(self.get_subtree_entry_count(node_right) > 0);
@@ -497,7 +497,7 @@ mod test {
 
     #[test]
     fn correctness() {
-        let dimensions = 256;
+        let dimensions = 8;
         let max_leaf_len = 1;
         let n = 1024*32;
 
@@ -505,7 +505,6 @@ mod test {
         let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
 
         let mut baseline  = Frontier::new();
-        
         
         let mut total_gen = 0.0;
         let mut total_add_new = 0.0;
@@ -529,18 +528,20 @@ mod test {
             let start_new = Instant::now();
             let added = frontier.add_if_not_dominated(value);
             total_add_new += start_new.elapsed().as_secs_f64();
-            
+
             assert_eq!(added, added_base);
             assert_eq!(frontier.len(), baseline.len());
         }
+
+        let depths = format!("{:?}", frontier.collect_entry_depths());
+        std::fs::write("ignored/depths.txt", &depths).unwrap();
         
+        frontier.print(10);
+
         println!("Times:");
         println!("  gen=     {}s", total_gen);
         println!("  add_old= {}s", total_add_old);
         println!("  add_new= {}s", total_add_new);
-
-        let depths = format!("{:?}", frontier.collect_entry_depths());
-        std::fs::write("ignored/depths.txt", &depths).unwrap();
     }
 
     #[test]
