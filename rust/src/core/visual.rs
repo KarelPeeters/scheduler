@@ -174,10 +174,15 @@ fn pick_axis_ticks(max_value: f64, _max_ticks: usize) -> Vec<f64> {
 }
 
 impl<V> Frontier<Cost, V> {
-    pub fn write_svg_to(&self, mut f: impl Write) -> std::io::Result<()> {
-        let line = poloto::build::plot("frontier")
-            .scatter(self.iter_arbitrary().map(|(&c, _)| (c.time, c.energy)));
-        let plots = poloto::plots!(line);
+    pub fn write_svg_to(&self, old: &[Cost], mut f: impl Write) -> std::io::Result<()> {
+        let curr = self.iter_arbitrary().map(|(&c, _)| c).collect::<Vec<_>>();
+        
+        let scatter_old = poloto::build::plot("old")
+            .scatter(old.iter().filter(|c| !curr.contains(c)).map(|c| (c.time, c.energy)));
+        let scatter_curr = poloto::build::plot("curr")
+            .scatter(curr.iter().map(|c| (c.time, c.energy)));
+        
+        let plots = poloto::plots!(scatter_old, scatter_curr);
 
         let result = poloto::frame_build().data(plots)
             .build_and_label(("Pareto front", "Time", "Energy"))
@@ -186,9 +191,9 @@ impl<V> Frontier<Cost, V> {
         write!(f, "{}", result)
     }
 
-    pub fn write_svg_to_file(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+    pub fn write_svg_to_file(&self, old: &[Cost], path: impl AsRef<Path>) -> std::io::Result<()> {
         let mut f = BufWriter::new(File::create(path)?);
-        self.write_svg_to(&mut f)?;
+        self.write_svg_to(old, &mut f)?;
         f.flush()?;
         drop(f);
         Ok(())

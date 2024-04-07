@@ -78,6 +78,7 @@ fn main_solver(problem: &Problem) {
         next_index: 0,
         state_counter: 0,
         start: Instant::now(),
+        old_frontier_costs: vec![],
     };
 
     let start = Instant::now();
@@ -89,6 +90,7 @@ struct CustomReporter {
     next_index: u64,
     state_counter: u64,
     start: Instant,
+    old_frontier_costs: Vec<Cost>,
 }
 
 impl Reporter for CustomReporter {
@@ -107,10 +109,16 @@ impl Reporter for CustomReporter {
         for (i, (_, state)) in enumerate(frontier.iter_arbitrary()) {
             state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
         }
+        
+        for (&cost, _) in frontier.iter_arbitrary() {
+            if !self.old_frontier_costs.contains(&cost) {
+                self.old_frontier_costs.push(cost);
+            }
+        }
 
         // TODO include values states that were ever in the frontier?
         //   impl: just store in this reporter and change the plot function to take a list
-        frontier.write_svg_to_file("ignored/schedules/frontier.svg").unwrap();
+        frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
     fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, state: &State) {
@@ -154,8 +162,8 @@ fn build_problem() -> Problem {
     let alloc_energy = 100.0;
     let alloc_time_energy_factors = vec![
         ("mid", 1.0, 1.0),
-        // ("efficient", 1.5, 0.5),
-        // ("fast", 0.8, 2.0),
+        ("efficient", 1.5, 0.5),
+        ("fast", 0.8, 2.0),
     ];
 
     let graph_depth = 4;
