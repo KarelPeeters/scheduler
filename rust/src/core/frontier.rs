@@ -284,15 +284,19 @@ impl<S: Copy> DomBuilder<S> {
             other_value,
         }
     }
-
-    pub fn minimize<T: PartialOrd>(&mut self, f: impl Fn(S) -> T) {
-        match f(self.self_value).partial_cmp(&f(self.other_value)) {
+    
+    pub fn minimize_custom<T: PartialOrd>(&mut self, self_value: T, other_value: T) {
+        match self_value.partial_cmp(&other_value) {
             Some(std::cmp::Ordering::Less) => self.any_better = true,
             Some(std::cmp::Ordering::Greater) => self.any_worse = true,
             Some(std::cmp::Ordering::Equal) => {}
             // TODO require ord? but then comparing floats becomes annoying...
             None => panic!("Cannot compare values"),
         }
+    }
+
+    pub fn minimize<T: PartialOrd>(&mut self, f: impl Fn(S) -> T) {
+        self.minimize_custom(f(self.self_value), f(self.other_value));
     }
 
     pub fn maximize<T: PartialOrd>(&mut self, f: impl Fn(S) -> T) {

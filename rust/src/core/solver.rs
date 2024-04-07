@@ -31,7 +31,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
     
     let mut frontier_done = Frontier::new();
     let mut frontier_partial = Frontier::new();
-    let mut frontier_partial_new = NewFrontier::new(state.dom_key_min(problem).len(), 1);
+    let mut frontier_partial_new = NewFrontier::new(state.dom_key_min(problem).1, 1);
 
     let mut ctx = Context {
         problem,
@@ -45,6 +45,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
 }
 
 // TODO split this up into smaller functions
+#[inline(never)]
 fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     let problem = ctx.problem;
     state.assert_valid(problem);
@@ -66,7 +67,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         return;
     }
     // let added = ctx.frontier_partial.add(&state, problem, || ());
-    let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem));
+    let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem).0);
     // assert_eq!(added, added_new);
     if !added_new {
         return;
@@ -126,6 +127,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     }
 }
 
+#[inline(never)]
 fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc: Allocation) {
     // aliases
     let problem = ctx.problem;
@@ -170,6 +172,7 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
     assert!(prev);
 }
 
+#[inline(never)]
 fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel) {
     // aliases
     let problem = ctx.problem;
@@ -187,6 +190,7 @@ fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, cha
     }
 }
 
+#[inline(never)]
 fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel, value: Node) {
     // aliases
     let problem = ctx.problem;

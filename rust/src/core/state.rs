@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use itertools::{chain, enumerate, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
+use crate::core::new_frontier::SparseVec;
 use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait, TimeRange};
 use crate::dom_early_check;
@@ -507,30 +508,40 @@ impl State {
         }
     }
 
-    pub fn dom_key_min(&self, problem: &Problem) -> Vec<f64> {
-        let mut key = vec![];
+    pub fn dom_key_min(&self, problem: &Problem) -> (SparseVec, usize) {
+        let mut key = SparseVec::new();
+        
+        // TODO clean this up, maybe just have SparseVec.push that keeps an internal index?
+        //   then we can't construct it efficiently any more through, and wastes a bit of memory
+        let mut next_index = 0;
+        let mut next_index = move || {
+            let i = next_index;
+            next_index += 1;
+            i
+        };
 
         // basics
-        key.push(self.curr_time);
-        key.push(self.curr_energy);
-        key.push(self.minimum_time);
+        key.push(next_index(), self.curr_time);
+        key.push(next_index(), self.curr_energy);
+        key.push(next_index(), self.minimum_time);
 
         // group availability
         for group in problem.hardware.groups() {
-            key.push(match self.state_group[group.0] {
+            let v = match self.state_group[group.0] {
                 None => self.curr_time,
                 Some(action) => action.time().end,
-            });
+            };
+            key.push(next_index(), v);
         }
 
         // value availability
         for mem in problem.hardware.memories() {
             for value in problem.graph.nodes() {
-                key.push(self.value_mem_dom_key_min(value, mem));
+                key.push(next_index(), self.value_mem_dom_key_min(value, mem));
             }
         }
 
-        key
+        (key, next_index())
     }
 }
 

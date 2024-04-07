@@ -174,7 +174,7 @@ fn build_problem() -> Problem {
     let graph_depth = 4;
     let graph_branching = 2;
     let graph_node_size = 1000;
-    let graph_cross = true;
+    let graph_cross = false;
 
     // hardware
     let mut hardware = Hardware::new("hardware");
