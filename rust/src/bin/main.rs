@@ -106,7 +106,9 @@ impl Reporter for CustomReporter {
         std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
 
         // save entire frontier
-        for (i, (_, state)) in enumerate(frontier.iter_arbitrary()) {
+        let mut frontier_pairs = frontier.iter_arbitrary().collect_vec();
+        frontier_pairs.sort_by_key(|(c, _)| OrderedFloat(c.time));
+        for (i, (_, state)) in enumerate(frontier_pairs) {
             state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
         }
         
