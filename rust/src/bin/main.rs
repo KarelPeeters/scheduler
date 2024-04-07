@@ -142,6 +142,9 @@ impl Reporter for CustomReporter {
 
             if frontier_new.len() > 0 {
                 println!("frontier_new: len={}", frontier_new.len());
+
+                let depths = format!("{:?}", frontier_new.collect_entry_depths());
+                std::fs::write("ignored/depths.txt", &depths).unwrap();
             }
             
             let index = self.next_index;
