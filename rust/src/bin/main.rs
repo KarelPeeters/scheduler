@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use itertools::{enumerate, Itertools};
 use ordered_float::OrderedFloat;
 
-use rust::core::frontier::{DomBuilder, DomDir, Frontier};
+use rust::core::frontier::Frontier;
+use rust::core::new_frontier::NewFrontier;
 use rust::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
@@ -112,21 +113,27 @@ impl Reporter for CustomReporter {
         frontier.write_svg_to_file("ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % 1_000 == 0 {
             println!("New state, state_counter={}, elapsed={:?}", self.state_counter, self.start.elapsed());
 
-            println!("State: frontier:");
-            println!("  len={}", frontier.len());
-            println!("  add_count={}", frontier.count_add_try);
-            println!("  add_success={}", frontier.count_add_success as f64 / frontier.count_add_try as f64);
-            println!("  add_removed={}", frontier.count_add_removed as f64 / frontier.count_add_try as f64);
-            frontier.count_add_try = 0;
-            frontier.count_add_success = 0;
-            frontier.count_add_removed = 0;
+            if frontier.len() > 0 {
+                println!("frontier:");
+                println!("  len={}", frontier.len());
+                println!("  add_count={}", frontier.count_add_try);
+                println!("  add_success={}", frontier.count_add_success as f64 / frontier.count_add_try as f64);
+                println!("  add_removed={}", frontier.count_add_removed as f64 / frontier.count_add_try as f64);
+                frontier.count_add_try = 0;
+                frontier.count_add_success = 0;
+                frontier.count_add_removed = 0;
+            }
 
+            if frontier_new.len() > 0 {
+                println!("frontier_new: len={}", frontier_new.len());
+            }
+            
             let index = self.next_index;
             self.next_index += 1;
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();

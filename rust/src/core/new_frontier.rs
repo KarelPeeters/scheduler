@@ -1,7 +1,6 @@
 use std::cmp::max;
 use std::ops::RangeInclusive;
-
-use itertools::Itertools;
+use itertools::chain;
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::dom_early_check;
@@ -284,7 +283,7 @@ impl NewFrontier {
 
         // TODO what if we fail to split? this can't happen in dominance luckily enough
 
-        for axis in start_axis..self.dimensions {
+        for axis in chain(start_axis..self.dimensions, 0..start_axis) {
             if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
                 let key = entries[pivot - 1][axis];
                 // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
@@ -485,11 +484,12 @@ impl Dominance for Vec<f64> {
 #[cfg(test)]
 mod test {
     use std::time::Instant;
+
     use itertools::Itertools;
     use rand::{Rng, SeedableRng};
     use rand::rngs::SmallRng;
-    use crate::core::frontier::Frontier;
 
+    use crate::core::frontier::Frontier;
     use crate::core::new_frontier::NewFrontier;
 
     #[test]
@@ -595,5 +595,29 @@ mod test {
         // }
 
         // frontier.print(usize::MAX);
+    }
+
+    #[test]
+    fn bug_from_solver() {
+        let inf = f64::INFINITY;
+        let data = vec![
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, inf, inf, inf, inf, inf],
+            [0.0, 2000.0, 1000.0, 0.0, 1000.0, 0.0, inf, 1000.0, inf, inf, inf],
+            [1000.0, 2000.0, 1000.0, 1000.0, 1000.0, 0.0, inf, 0.0, inf, inf, inf],
+            [1000.0, 2100.0, 5000.0, 5000.0, 1000.0, -inf, inf, -inf, 5000.0, inf, inf],
+            [5000.0, 2100.0, 5000.0, 5000.0, 5000.0, -inf, inf, -inf, 0.0, inf, inf],
+            [5000.0, 2200.0, 9000.0, 9000.0, 5000.0, -inf, -inf, -inf, -inf, 9000.0, inf],
+            [9000.0, 2200.0, 9000.0, 9000.0, 9000.0, -inf, -inf, -inf, -inf, 0.0, inf],
+        ];
+
+        let mut frontier = NewFrontier::new(data[0].len(), 1);
+        for line in data {
+            frontier.print(usize::MAX);
+
+            frontier.add_if_not_dominated(line.to_vec());
+            frontier.assert_valid();
+        }
+
+        frontier.print(usize::MAX);
     }
 }

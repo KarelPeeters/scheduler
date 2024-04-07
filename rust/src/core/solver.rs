@@ -1,12 +1,13 @@
 use itertools::{Itertools, zip_eq};
 
 use crate::core::frontier::Frontier;
+use crate::core::new_frontier::NewFrontier;
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, state: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -14,7 +15,7 @@ pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &mut NewFrontier, _: &State) {}
 }
 
 pub struct Context<'p, 'r, 'f, R: Reporter> {
@@ -22,20 +23,24 @@ pub struct Context<'p, 'r, 'f, R: Reporter> {
     reporter: &'r mut R,
     frontier_done: &'f mut Frontier<Cost, State>,
     frontier_partial: &'f mut Frontier<State, ()>,
+    frontier_partial_new: &'f mut NewFrontier,
 }
 
 pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
+    let state = State::new(problem);
+    
     let mut frontier_done = Frontier::new();
     let mut frontier_partial = Frontier::new();
+    let mut frontier_partial_new = NewFrontier::new(state.dom_key_min(problem).len(), 1);
 
     let mut ctx = Context {
         problem,
         reporter,
         frontier_done: &mut frontier_done,
         frontier_partial: &mut frontier_partial,
+        frontier_partial_new: &mut frontier_partial_new,
     };
 
-    let state = State::new(problem);
     recurse(&mut ctx, state);
 }
 
@@ -60,10 +65,13 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &()) {
         return;
     }
-    if !ctx.frontier_partial.add(&state, problem, || ()) {
+    // let added = ctx.frontier_partial.add(&state, problem, || ());
+    let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem));
+    // assert_eq!(added, added_new);
+    if !added_new {
         return;
     }
-    ctx.reporter.report_new_state(problem, ctx.frontier_partial, &state);
+    ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, &state);
 
     // drop dead values from memories
     // TODO only do this after wait?

@@ -488,22 +488,49 @@ impl State {
         self.tried_allocs = tried_allocs;
     }
 
-    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> impl PartialOrd {
+    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> f64 {
         if self.value_remaining_unstarted_uses[value.0] == 0 {
             // dead, best possible case
-            return (0, 0.0);
+            return f64::NEG_INFINITY;
         }
 
         match self.value_mem_availability(value, mem) {
             // available now
             // TODO use current time here?
-            Some(ValueState::AvailableNow { .. }) => (1, 0.0),
+            Some(ValueState::AvailableNow { .. }) => 0.0,
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => (2, time),
+            Some(ValueState::AvailableAtTime(time)) => time,
             // not even scheduled, worst case
-            None => (3, 0.0),
+            // TODO is that really true? what if we decide to schedule a state afterwards?
+            None => f64::INFINITY,
         }
+    }
+
+    pub fn dom_key_min(&self, problem: &Problem) -> Vec<f64> {
+        let mut key = vec![];
+
+        // basics
+        key.push(self.curr_time);
+        key.push(self.curr_energy);
+        key.push(self.minimum_time);
+
+        // group availability
+        for group in problem.hardware.groups() {
+            key.push(match self.state_group[group.0] {
+                None => self.curr_time,
+                Some(action) => action.time().end,
+            });
+        }
+
+        // value availability
+        for mem in problem.hardware.memories() {
+            for value in problem.graph.nodes() {
+                key.push(self.value_mem_dom_key_min(value, mem));
+            }
+        }
+
+        key
     }
 }
 
