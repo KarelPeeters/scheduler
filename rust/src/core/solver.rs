@@ -96,6 +96,7 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
                 let dead = state.value_remaining_unstarted_uses[value.0] == 0;
                 
                 if dead && read_count == 0 {
+                    // TODO don't do this, just delete the operation but keep going?
                     // prune this branch if we're dropping values that haven't been used,
                     //   we should have avoided copying them in the first place!
                     exit = true;

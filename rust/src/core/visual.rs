@@ -32,8 +32,8 @@ impl State {
         )?;
         // writeln!(f, "<style>text {{ font-size: 20px; }}</style>")?;
 
-        // grey background
-        writeln!(f, "<rect width='100%' height='100%' fill='lightgrey' />")?;
+        // background
+        writeln!(f, "<rect width='100%' height='100%' fill='white' />")?;
 
         // bounding box
         writeln!(

@@ -47,10 +47,15 @@
 * Drop useless operations in done state to get tighter bound.
   * ie. still-running and transfers that didn't get used
 * Don't take actions that could have been taken earlier.
+* Gradually expand the solution space to try to get full schedules as quickly as possible, enabling more cuts.
+  * This can take many forms, eg. limit the allocations that can be used, the cores, ...
 
 # Input preprocessing
 * Drop dominated allocations (and maybe channels if that's possible)?
 * Remove impossible to use channels, memories, allocations.
+* Sort allocations by lower energy and time, hopefully this better deals with the combinatorial
+  triangle explosion when there are multiple choices (eg. eff, mid, fast).
+  * Plot some graphs to see how bad it currently is, are we doing O(N^2)?
 
 # Low level optimizations
 

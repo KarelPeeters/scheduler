@@ -82,11 +82,9 @@ fn main_solver(problem: &Problem) {
         old_frontier_costs: vec![],
     };
 
-    loop {
-        let start = Instant::now();
-        solve(&problem, &mut reporter);
-        println!("Solver took {:?}s", start.elapsed().as_secs_f64());
-    }
+    let start = Instant::now();
+    solve(&problem, &mut reporter);
+    println!("Solver took {:?}s", start.elapsed().as_secs_f64());
 }
 
 struct CustomReporter {
@@ -150,12 +148,12 @@ impl Reporter for CustomReporter {
                 std::fs::write("ignored/depths_new.txt", &depths).unwrap();
             }
 
-            // if frontier_linear.len() > 0 {
-            //     println!("frontier_linear: len={}", frontier_linear.len());
-            // 
-            //     let depths = format!("{:?}", frontier_linear.collect_entry_depths());
-            //     std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
-            // }
+            if frontier_linear.len() > 0 {
+                println!("frontier_linear: len={}", frontier_linear.len());
+
+                let depths = format!("{:?}", frontier_linear.collect_entry_depths());
+                std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
+            }
 
             let index = self.next_index;
             self.next_index += 1;
@@ -184,6 +182,7 @@ fn build_problem() -> Problem {
     let graph_depth = 4;
     let graph_branching = 2;
     let graph_node_size = 1000;
+    let graph_weight_size = None; //1000;
     let graph_cross = false;
 
     // hardware
@@ -233,11 +232,22 @@ fn build_problem() -> Problem {
     let mut prev = vec![node_input];
     for i_depth in 0..graph_depth {
         let next = (0..graph_branching).map(|i_branch| {
-            let inputs = if graph_cross || i_depth == 0 {
+            let mut inputs = if graph_cross || i_depth == 0 {
                 prev.clone()
             } else {
                 vec![prev[i_branch]]
             };
+
+            if let Some(graph_weight_size) = graph_weight_size {
+                let weight = graph.add_node(NodeInfo {
+                    id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
+                    size_bits: graph_weight_size,
+                    inputs: vec![],
+                });
+                graph.add_input(weight);
+                inputs.push(weight);
+            }
+            
             graph.add_node(NodeInfo {
                 id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
                 size_bits: graph_node_size,
