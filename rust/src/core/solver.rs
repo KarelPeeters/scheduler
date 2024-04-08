@@ -1,13 +1,14 @@
 use itertools::{Itertools, zip_eq};
 
 use crate::core::frontier::Frontier;
+use crate::core::linear_frontier::LinearFrontier;
 use crate::core::new_frontier::NewFrontier;
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, state: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, frontier_linear: &mut LinearFrontier, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -15,7 +16,7 @@ pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &mut NewFrontier, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &mut NewFrontier, _: &mut LinearFrontier, _: &State) {}
 }
 
 pub struct Context<'p, 'r, 'f, R: Reporter> {
@@ -24,6 +25,7 @@ pub struct Context<'p, 'r, 'f, R: Reporter> {
     frontier_done: &'f mut Frontier<Cost, State>,
     frontier_partial: &'f mut Frontier<State, ()>,
     frontier_partial_new: &'f mut NewFrontier,
+    frontier_partial_linear: &'f mut LinearFrontier,
 }
 
 pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
@@ -32,6 +34,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
     let mut frontier_done = Frontier::new();
     let mut frontier_partial = Frontier::new();
     let mut frontier_partial_new = NewFrontier::new(state.dom_key_min(problem).1, 1);
+    let mut frontier_partial_linear = LinearFrontier::new(state.dom_key_min(problem).1);
 
     let mut ctx = Context {
         problem,
@@ -39,6 +42,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
         frontier_done: &mut frontier_done,
         frontier_partial: &mut frontier_partial,
         frontier_partial_new: &mut frontier_partial_new,
+        frontier_partial_linear: &mut frontier_partial_linear,
     };
 
     recurse(&mut ctx, state);
@@ -67,12 +71,14 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         return;
     }
     // let added = ctx.frontier_partial.add(&state, problem, || ());
-    let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem).0);
-    // assert_eq!(added, added_new);
-    if !added_new {
+    // let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem).0);
+    let added_linear = ctx.frontier_partial_linear.add_if_not_dominated(state.dom_key_min(problem).0);
+
+    // assert_eq!(added_new, added_linear);
+    if !added_linear {
         return;
     }
-    ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, &state);
+    ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, ctx.frontier_partial_linear, &state);
 
     // drop dead values from memories
     // TODO only do this after wait?

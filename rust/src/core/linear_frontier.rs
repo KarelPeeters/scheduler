@@ -1,153 +1,29 @@
-use std::cmp::Ordering;
 use std::ops::RangeInclusive;
 
-use itertools::{chain, enumerate};
-use rand::{Rng, thread_rng};
-
-use crate::core::frontier::{DomBuilder, DomDir, Dominance};
-use crate::dom_early_check;
+use crate::core::frontier::{DomDir, Dominance};
+use crate::core::new_frontier::SparseVec;
 use crate::util::mini::{max_f64, min_f64};
 
-pub struct NewFrontier {
-    _dimensions: usize,
+pub struct LinearFrontier {
+    dimensions: usize,
     len: usize,
     // TODO is doing our own indexing and garbage collection faster?
-    root_node: Option<Box<Node>>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq)]
-pub struct SparseVec {
-    entries: Vec<(usize, f64)>,
-}
-
-pub struct SparseVecPairIterator<'l, 'r> {
-    left: &'l SparseVec,
-    right: &'r SparseVec,
-    left_index: usize,
-    right_index: usize,
-}
-
-impl SparseVec {
-    // TODO configurable default, either through field or generic?
-    // TODO should this be min or max inf? which is most common?
-    pub const DEFAULT: f64 = f64::INFINITY;
-
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn from_iter(iter: impl IntoIterator<Item=f64>) -> Self {
-        let mut result = Self::new();
-        for (i, v) in enumerate(iter) {
-            result.push(i, v);
-        }
-        result
-    }
-
-    // TODO go through and avoid using this in as many places as possible
-    pub fn get(&self, index: usize) -> f64 {
-        match self.entries.binary_search_by_key(&index, |&(k, _)| k) {
-            Ok(i) => self.entries[i].1,
-            Err(_) => Self::DEFAULT,
-        }
-    }
-
-    pub fn push(&mut self, index: usize, value: f64) {
-        if let Some(&(prev_index, _)) = self.entries.last() {
-            assert!(prev_index < index);
-        }
-
-        if value == Self::DEFAULT {
-            // no need to store default!
-            return;
-        }
-
-        self.entries.push((index, value));
-    }
-
-    pub fn iter_pairs<'l, 'r>(&'l self, other: &'r Self) -> SparseVecPairIterator<'l, 'r> {
-        SparseVecPairIterator {
-            left: self,
-            right: other,
-            left_index: 0,
-            right_index: 0,
-        }
-    }
-}
-
-impl Iterator for SparseVecPairIterator<'_, '_> {
-    type Item = (usize, f64, f64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let remaining_left = self.left_index < self.left.entries.len();
-        let remaining_right = self.right_index < self.right.entries.len();
-
-        match (remaining_left, remaining_right) {
-            (false, false) => None,
-            (true, false) => {
-                let (left_i, left_v) = self.left.entries[self.left_index];
-                self.left_index += 1;
-                Some((left_i, left_v, SparseVec::DEFAULT))
-            }
-            (false, true) => {
-                let (right_i, right_v) = self.right.entries[self.right_index];
-                self.right_index += 1;
-                Some((right_i, SparseVec::DEFAULT, right_v))
-            }
-            (true, true) => {
-                let (left_i, left_v) = self.left.entries[self.left_index];
-                let (right_i, right_v) = self.right.entries[self.right_index];
-
-                if left_i == right_i {
-                    self.left_index += 1;
-                    self.right_index += 1;
-                    Some((left_i, left_v, right_v))
-                } else if left_i < right_i {
-                    self.left_index += 1;
-                    Some((left_i, left_v, SparseVec::DEFAULT))
-                } else {
-                    self.right_index += 1;
-                    Some((right_i, SparseVec::DEFAULT, right_v))
-                }
-            }
-        }
-    }
+    root_node: Option<Node>,
 }
 
 // TODO custom drop implementation that doesn't recurse as much?
 enum Node {
-    Branch {
-        // TODO if we always cycle, just use depth
-        axis: usize,
-        key: f64,
-
-        // TODO alternate between eq and neq depending on depth to prevent any bias?
-        /// entries with `value <= key`
-        node_left: Box<Node>,
-        /// entries with `key < value`
-        node_right: Box<Node>,
-    },
     Leaf(SparseVec),
+    Branch {
+        axis: usize,
+        entries: Vec<(f64, Node)>,
+    },
 }
 
-// TODO use this instead of bool
-// enum DropResult {
-//     /// Implications:
-//     /// * An old entry exists that dominates new.
-//     /// * No old entries were dropped.
-//     OldDomNew,
-//     /// * No old entry dominates new.
-//     /// * Some old entries may have been dropped.
-//     NoOldDomNew,
-// }
-
-impl NewFrontier {
-    pub fn new(dimensions: usize, max_leaf_len: usize) -> Self {
-        // TODO remove this param
-        assert_eq!(max_leaf_len, 1);
-
+impl LinearFrontier {
+    pub fn new(dimensions: usize) -> Self {
         Self {
-            _dimensions: dimensions,
+            dimensions,
             len: 0,
             root_node: None,
         }
@@ -192,60 +68,32 @@ impl NewFrontier {
         f(depth, node);
 
         match *node {
-            Node::Branch { axis: _, key: _, ref node_left, ref node_right } => {
-                self.recurse_for_each_node(node_left, depth + 1, f);
-                self.recurse_for_each_node(node_right, depth + 1, f);
+            Node::Branch { axis: _, ref entries } => {
+                for (_, entry) in entries {
+                    self.recurse_for_each_node(entry, depth + 1, f);
+                }
             }
             Node::Leaf(_) => {}
         }
     }
-    
+
     // TODO explicit stack vs recursion?
     // TODO state ptr vs arg+return
     // TODO rename: add and drop dominated
     #[inline(never)]
     pub fn add_if_not_dominated(&mut self, new: SparseVec) -> bool {
-        // if self.len() % 1000 == 0 {
-        //     // test how well sparse masking would work
-        //
-        //     let mut entries = vec![];
-        //     self.for_each_entry(|_, e| entries.push(e));
-        //
-        //     let mut groups = HashMap::new();
-        //     for &e in &entries {
-        //         // let indices = e.entries.iter().map(|&(k, v)| k).collect_vec();
-        //         groups.entry(self.mask(e)).or_insert_with(Vec::new).push(e);
-        //     }
-        //
-        //     println!("frontier sparse:");
-        //     println!("  groups: {}", groups.len());
-        //     // println!("  group sizes: {:?}", groups.values().map(Vec::len).minmax());
-        //     println!("  group sizes: {:?}", groups.values().map(Vec::len).collect_vec());
-        //
-        //     let mut maybe_comparable_groups = 0;
-        //     let mut maybe_comparable_entries = 0;
-        //     for k in groups.keys() {
-        //
-        //         // let any_extra_key = new.entries.iter().any(|&(x, _)| !k.contains(&x));
-        //         // let any_missing_key = k.iter().any(|&x| new.get(x) == SparseVec::DEFAULT);
-        //
-        //         let dom = self.mask(&new).dominance(k, &());
-        //         if dom != DomDir::Incomparable {
-        //             maybe_comparable_groups += 1;
-        //             maybe_comparable_entries += groups.get(k).unwrap().len();
-        //         }
-        //     }
-        //     println!("  maybe comparable groups: {}/{} = {}", maybe_comparable_groups, groups.len(), maybe_comparable_groups as f64 / groups.len() as f64);
-        //     println!("  maybe comparable entries: {}/{} = {}", maybe_comparable_entries, entries.len(), maybe_comparable_entries as f64 / entries.len() as f64);
-        // }
-
         // check if any old dominates new and remove dominated old entries
         let mut entries_checked = 0;
-        if let Some(root_node) = std::mem::take(&mut self.root_node) {
-            let (any_old_dom, new_root_node) = self.recurse_drop_and_check_dom(root_node, &new, false, false, &mut entries_checked);
-            self.root_node = new_root_node;
+        if let Some(mut root_node) = std::mem::take(&mut self.root_node) {
+            let (any_old_dom, empty) = self.recurse_drop_and_check_dom(&mut root_node, &new, false, false, &mut entries_checked);
+
+            // put root node back (we just took it out for self mut reasons)
+            if !empty {
+                self.root_node = Some(root_node);
+            }
+
             if any_old_dom {
-                assert!(self.root_node.is_some());
+                assert!(!empty);
                 return false;
             }
         }
@@ -256,10 +104,10 @@ impl NewFrontier {
         // TODO move method to Node struct to make lifetimes easier
         match std::mem::take(&mut self.root_node) {
             None => {
-                self.root_node = Some(Box::new(Node::Leaf(new)));
+                self.root_node = Some(Node::Leaf(new));
             }
             Some(mut root_node) => {
-                self.recurse_add(&mut root_node, new, 0, None);
+                self.recurse_add(&mut root_node, new, 0, 0);
                 assert!(self.root_node.is_none());
                 self.root_node = Some(root_node);
             }
@@ -278,72 +126,63 @@ impl NewFrontier {
     /// we know that the corresponding `new` axis value will be better or worse for sure,
     /// this is reflected in `new_any_better` and `new_any_worse`.
     ///
-    /// The return values are (old_dom, is_now_empty):
+    /// The return values are (old_dom, is_now_empty).
+    /// The meaning of `old_dom` is:
     /// * `true`: an `old` entry exists that dominates or is equal to `new`.
     ///     Through the transitive property this also implies that no old values were dropped,
     ///     and that we can stop recursing early.
     /// * `false`: no `old` entry dominates or is equal to `new`.
     ///     Some old entries that were dominated by `new` may have been dropped.
     #[inline(never)]
-    fn recurse_drop_and_check_dom(&mut self, node: Box<Node>, new: &SparseVec, branch_new_any_better: bool, branch_new_any_worse: bool, entries_checked: &mut usize) -> (bool, Option<Box<Node>>) {
+    fn recurse_drop_and_check_dom(&mut self, node: &mut Node, new: &SparseVec, branch_new_any_better: bool, branch_new_any_worse: bool, entries_checked: &mut usize) -> (bool, bool) {
         // TODO move this up one level and turn this into an assert?
+        // TODO with this tree search thing it's even more important, since we can skip an entire loop
         if branch_new_any_better && branch_new_any_worse {
             // println!("add incomparable, give up");
             return (
                 // no old dominating found
                 false,
                 // no entries were dropped, so we can't be empty
-                Some(node)
+                false,
             );
         }
 
-        // to avoid re-boxing (which is allocation), we keep the old box alive with a dummy value
-        let mut node_box = node;
-        let dummy_node = Node::Leaf(SparseVec::new());
-        let node = std::mem::replace(&mut *node_box, dummy_node);
-
         match node {
-            Node::Branch { axis, key, node_left, node_right } => {
-                let new_key = new.get(axis);
+            Node::Branch { axis, entries } => {
+                // TODO switch to linear search once the list is short enough
+                let new_key = new.get(*axis);
+                let (limit_lower, index_equal, start_higher) = match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
+                    Ok(index) => (index, Some(index), index + 1),
+                    Err(index) => (index, None, index),
+                };
 
-                let (exit_left, node_left) = self.recurse_drop_and_check_dom(
-                    node_left,
-                    new,
-                    branch_new_any_better,
-                    branch_new_any_worse || key < new_key,
-                    entries_checked,
-                );
-                if exit_left {
-                    let node_left = node_left.unwrap();
-                    // reuse the existing box
-                    *node_box = Node::Branch { axis, key, node_left, node_right };
-                    return (true, Some(node_box));
-                }
-                let (exit_right, node_right) = self.recurse_drop_and_check_dom(
-                    node_right,
-                    new,
-                    branch_new_any_better || new_key < key,
-                    branch_new_any_worse,
-                    entries_checked,
-                );
+                let mut next_index = 0;
+                let mut any_exit = false;
 
-                match (node_left, node_right) {
-                    (Some(node_left), Some(node_right)) => {
-                        // reuse the existing box
-                        *node_box = Node::Branch { axis, key, node_left, node_right };
-                        (exit_right, Some(node_box))
-                    },
-                    (Some(node_left), None) => {
-                        assert!(!exit_right);
-                        (false, Some(node_left))
-                    },
-                    (None, Some(node_right)) => {
-                        (exit_right, Some(node_right))
-                    },
-                    (None, None) => {
-                        (false, None)
+                entries.retain_mut(|(_, child)| {
+                    // TODO custom retain_mut that supports early exit?
+                    if any_exit {
+                        return true;
                     }
-                }
+
+                    let index = next_index;
+                    next_index += 1;
+
+                    let (better, worse) = if index < limit_lower {
+                        (branch_new_any_better, true)
+                    } else if Some(index) == index_equal {
+                        (branch_new_any_better, branch_new_any_worse)
+                    } else {
+                        assert!(index >= start_higher);
+                        (true, branch_new_any_worse)
+                    };
+
+                    let (exit, empty) = self.recurse_drop_and_check_dom(child, new, better, worse, entries_checked);
+                    any_exit |= exit;
+                    !empty
+                });
+
+                (any_exit, entries.is_empty())
             }
             Node::Leaf(old) => {
                 *entries_checked += 1;
@@ -352,68 +191,98 @@ impl NewFrontier {
                     DomDir::Better => {
                         // drop old
                         self.len -= 1;
-                        (false, None)
-                    },
+                        (false, true)
+                    }
                     DomDir::Worse | DomDir::Equal => {
                         // report that new is dominated, keep old
-                        // (reuse the existing box)
-                        *node_box = Node::Leaf(old);
-                        (true, Some(node_box))
+                        (true, false)
                     }
                     DomDir::Incomparable => {
                         // report that new is not dominated, keep old
-                        // (reuse the existing box)
-                        *node_box = Node::Leaf(old);
-                        (false, Some(node_box))
-                    },
+                        (false, false)
+                    }
                 }
             }
         }
     }
 
+    fn get_subtree_sample<'n>(&self, node: &'n Node) -> &'n SparseVec {
+        match node {
+            Node::Branch { axis: _, entries } => self.get_subtree_sample(&entries[0].1),
+            Node::Leaf(entry) => entry,
+        }
+    }
+
     // TODO remove self from some of these functions
+    // TODO pick/learn/... an optimal key ordering to get below O(k)
     #[inline(never)]
-    fn recurse_add(&mut self, node: &mut Box<Node>, new: SparseVec, depth: usize, _: Option<usize>) {
-        match &mut **node {
-            &mut Node::Branch { axis, key: value, ref mut node_left, ref mut node_right } => {
-                if new.get(axis) <= value {
-                    // println!("recurse_add left");
-                    self.recurse_add(node_left, new, depth + 1, Some(axis))
-                } else {
-                    // println!("recurse_add right");
-                    self.recurse_add(node_right, new, depth + 1, Some(axis))
+    fn recurse_add(&mut self, node: &mut Node, new: SparseVec, depth: usize, next_axis: usize) {
+        assert!(next_axis < self.dimensions);
+
+        match node {
+            &mut Node::Branch { axis: branch_axis, ref mut entries } => {
+                // insert earlier branch if any difference is found
+                // TODO only iterate over axes that either SparseVec has
+                let old = self.get_subtree_sample(&entries[0].1);
+                for split_axis in next_axis..branch_axis {
+                    let old_key = old.get(split_axis);
+                    let new_key = new.get(split_axis);
+                    if old_key == new_key {
+                        continue;
+                    }
+
+                    let old_entry = (old_key, Node::Branch { axis: branch_axis, entries: std::mem::take(entries) });
+                    let new_entry = (new_key, Node::Leaf(new));
+                    let entries = if old_key < new_key {
+                        vec![old_entry, new_entry]
+                    } else {
+                        vec![new_entry, old_entry]
+                    };
+
+                    *node = Node::Branch {
+                        axis: split_axis,
+                        entries,
+                    };
+                    return;
+                }
+
+                let new_key = new.get(branch_axis);
+                match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
+                    Ok(index) => {
+                        // existing branch found, continue recursing
+                        self.recurse_add(&mut entries[index].1, new, depth + 1, next_axis + 1);
+                    }
+                    Err(index) => {
+                        // add as new branch
+                        entries.insert(index, (new_key, Node::Leaf(new)));
+                    }
                 }
             }
             Node::Leaf(old) => {
-                let old = std::mem::replace(old, SparseVec::new());
+                let old = std::mem::take(old);
 
-                // determine axes to try
-                // TODO better/more clever axis picking?
-                // let start_axis = prev_axis.map_or(0, |axis| (axis + 1) % self.dimensions);
-                // let axis_iter = chain!(start_axis..self.dimensions, 0..start_axis);
+                // find the first different axis
+                // TODO only iterate over existing axes
+                for split_axis in next_axis..self.dimensions {
+                    let old_key = old.get(split_axis);
+                    let new_key = new.get(split_axis);
 
-                let start_axis_i = thread_rng().gen_range(0..new.entries.len());
-                let axis_iter = chain(&new.entries[start_axis_i..], &new.entries[..start_axis_i]).map(|&(a, _)| a);
+                    if old_key == new_key {
+                        continue;
+                    }
 
-                // pick axis
-                for axis in axis_iter {
-                    let new_key = new.get(axis);
-                    let old_key = old.get(axis);
+                    let old_entry = (old_key, Node::Leaf(old));
+                    let new_entry = (new_key, Node::Leaf(new));
 
-                    let (key, left, right) = match new_key.total_cmp(&old_key) {
-                        Ordering::Equal => continue,
-                        Ordering::Less => (new_key, new, old),
-                        Ordering::Greater => (old_key, old, new),
+                    let entries = if old_key < new_key {
+                        vec![old_entry, new_entry]
+                    } else {
+                        vec![new_entry, old_entry]
                     };
 
-                    let node_left = Box::new(Node::Leaf(left));
-                    let node_right = Box::new(Node::Leaf(right));
-
-                    **node = Node::Branch {
-                        axis,
-                        key,
-                        node_left,
-                        node_right,
+                    *node = Node::Branch {
+                        axis: split_axis,
+                        entries,
                     };
                     return;
                 }
@@ -455,7 +324,7 @@ impl NewFrontier {
     // }
 
     pub fn print(&self, max_depth: usize) {
-        println!("tree len={}", self.len);
+        println!("Tree: len={}", self.len);
 
         match &self.root_node {
             None => println!("  empty"),
@@ -466,16 +335,20 @@ impl NewFrontier {
     }
 
     fn recurse_print(&self, node: &Node, depth: usize, max_depth: usize) {
+        if depth > max_depth {
+            return;
+        }
+
         let indent = (depth + 1) * 2;
         match *node {
-            Node::Branch { axis, key: value, ref node_left, ref node_right } => {
-                println!("{:indent$}branch len={}, axis={}, value={}", "", self.get_subtree_entry_count(node), axis, value);
-                if depth < max_depth {
-                    self.recurse_print(node_left, depth + 1, max_depth);
-                    self.recurse_print(node_right, depth + 1, max_depth);
+            Node::Branch { axis, ref entries } => {
+                println!("{:indent$}branch len={}, axis={}", "", self.get_subtree_entry_count(node), axis);
+                for (k, e) in entries {
+                    println!("{:indent$}  k={}", "", k);
+                    self.recurse_print(e, depth + 1, max_depth);
                 }
             }
-            Node::Leaf(_) => {
+            Node::Leaf(ref vec) => {
                 println!("{:indent$}leaf", "");
             }
         }
@@ -483,7 +356,7 @@ impl NewFrontier {
 }
 
 // debug utilities
-impl NewFrontier {
+impl LinearFrontier {
     pub fn assert_valid(&self) {
         // length and invariants
         match &self.root_node {
@@ -511,30 +384,23 @@ impl NewFrontier {
 
     fn recurse_assert_valid(&self, node: &Node) {
         match *node {
-            Node::Branch { axis, key, ref node_left, ref node_right } => {
+            Node::Branch { axis, ref entries } => {
                 // counts must match
-                assert_eq!(self.get_subtree_entry_count(node), self.get_subtree_entry_count(node_left) + self.get_subtree_entry_count(node_right));
-                
-                // both branches must be nonempty
-                assert!(self.get_subtree_entry_count(node_left) > 0);
-                assert!(self.get_subtree_entry_count(node_right) > 0);
+                let total = entries.iter().map(|(_, n)| self.get_subtree_entry_count(n)).sum::<usize>();
+                assert_eq!(self.get_subtree_entry_count(node), total);
 
-                // ranges must respect key
-                let range_left = self.get_subtree_axis_value_range(node_left, axis).unwrap();
-                let range_right = self.get_subtree_axis_value_range(node_right, axis).unwrap();
-                // println!("left range: {:?}, right range: {:?}", range_left, range_right);
+                for &(k, ref n) in entries {
+                    // all branches must be nonempty
+                    assert!(self.get_subtree_entry_count(n) > 0);
 
-                assert!(!range_left.is_empty());
-                assert!(!range_right.is_empty());
+                    // ranges must match key
+                    let range = self.get_subtree_axis_value_range(n, axis).unwrap();
+                    assert_eq!(range, k..=k);
+                    assert!(!range.is_empty());
 
-                // TODO turn into equality again once we figure out key updating?
-                // assert_eq!(range_left.end, key);
-                assert!(*range_left.end() <= key);
-                assert!(key < *range_right.start());
-
-                // recurse
-                self.recurse_assert_valid(node_left);
-                self.recurse_assert_valid(node_right);
+                    // recurse
+                    self.recurse_assert_valid(n);
+                }
             }
             Node::Leaf(_) => {}
         }
@@ -575,7 +441,7 @@ fn sort_pick_pivot(axis: usize, slice: &mut [SparseVec]) -> Option<usize> {
     let mut best_dist = usize::MAX;
 
     // TODO iterate starting at center
-    for i in 0..slice.len()-1 {
+    for i in 0..slice.len() - 1 {
         if cmp(&slice[i], &slice[i + 1]).is_eq() {
             continue;
         }
@@ -600,37 +466,6 @@ fn sort_pick_pivot(axis: usize, slice: &mut [SparseVec]) -> Option<usize> {
     pivot_index
 }
 
-impl<T: PartialOrd> Dominance for Vec<T> {
-    type Aux = ();
-
-    #[inline(never)]
-    fn dominance(&self, other: &Self, _: &()) -> DomDir {
-        assert_eq!(self.len(), other.len());
-        let len = self.len();
-
-        let mut builder = DomBuilder::new(self, other);
-        for i in 0..len {
-            builder.minimize(|x| &x[i]);
-            dom_early_check!(builder);
-        }
-        builder.finish()
-    }
-}
-
-impl Dominance for SparseVec {
-    type Aux = ();
-
-    #[inline(never)]
-    fn dominance(&self, other: &Self, _: &()) -> DomDir {
-        let mut dom = DomBuilder::new((), ());
-        for (_, left_v, right_v) in self.iter_pairs(other) {
-            dom.minimize_custom(left_v, right_v);
-            dom_early_check!(dom);
-        }
-        dom.finish()
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::time::Instant;
@@ -640,40 +475,39 @@ mod test {
     use rand::rngs::SmallRng;
 
     use crate::core::frontier::Frontier;
-    use crate::core::new_frontier::{NewFrontier, SparseVec};
+    use crate::core::linear_frontier::LinearFrontier;
+    use crate::core::new_frontier::SparseVec;
 
     #[test]
     fn correctness() {
         let dimensions = 16;
-        let max_leaf_len = 1;
-        let n = 1024*32;
+        let n = 1024;
 
         let mut rng = SmallRng::seed_from_u64(0);
-        let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
+        let mut frontier = LinearFrontier::new(dimensions);
 
-        let mut baseline  = Frontier::new();
-        
+        let mut baseline = Frontier::new();
+
         let mut total_gen = 0.0;
         let mut total_add_new = 0.0;
         let mut total_add_old = 0.0;
 
-        for _ in 0..n {
+        for i in 0..n {
+            println!("N={}, Frontier length={}", i, frontier.len);
             // frontier.print(usize::MAX);
             // frontier.assert_valid();
-
-            println!("Frontier length={}", frontier.len);
 
             let start_gen = Instant::now();
 
             let full_value = (0..dimensions).map(|_| {
-                if rng.gen() {
-                    SparseVec::DEFAULT
-                } else {
-                    rng.gen_range(0.0..1.0)
+                match rng.gen_range(0..3) {
+                    0 => f64::NEG_INFINITY,
+                    1 => f64::INFINITY,
+                    2 => rng.gen_range(0.0..1.0),
+                    _ => unreachable!(),
                 }
             }).collect_vec();
             let value = SparseVec::from_iter(full_value.iter().copied());
-
             total_gen += start_gen.elapsed().as_secs_f64();
             // println!("Adding {:?}", value);
 
@@ -691,7 +525,7 @@ mod test {
 
         let depths = format!("{:?}", frontier.collect_entry_depths());
         std::fs::write("ignored/depths.txt", &depths).unwrap();
-        
+
         frontier.print(10);
 
         println!("Times:");
@@ -766,7 +600,7 @@ mod test {
             [9000.0, 2200.0, 9000.0, 9000.0, 9000.0, -inf, -inf, -inf, -inf, 0.0, inf],
         ];
 
-        let mut frontier = NewFrontier::new(data[0].len(), 1);
+        let mut frontier = LinearFrontier::new(data[0].len());
         for line in data {
             frontier.print(usize::MAX);
 

@@ -7,6 +7,7 @@ use itertools::{enumerate, Itertools};
 use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
+use rust::core::linear_frontier::LinearFrontier;
 use rust::core::new_frontier::NewFrontier;
 use rust::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
 use rust::core::solver::{Reporter, solve};
@@ -123,7 +124,7 @@ impl Reporter for CustomReporter {
         frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, frontier_linear: &mut LinearFrontier, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % 1_000 == 0 {
@@ -144,7 +145,14 @@ impl Reporter for CustomReporter {
                 println!("frontier_new: len={}", frontier_new.len());
 
                 let depths = format!("{:?}", frontier_new.collect_entry_depths());
-                std::fs::write("ignored/depths.txt", &depths).unwrap();
+                std::fs::write("ignored/depths_new.txt", &depths).unwrap();
+            }
+
+            if frontier_linear.len() > 0 {
+                println!("frontier_linear: len={}", frontier_linear.len());
+
+                let depths = format!("{:?}", frontier_linear.collect_entry_depths());
+                std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
             }
 
             let index = self.next_index;
