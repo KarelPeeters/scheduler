@@ -1,5 +1,10 @@
 use std::ops::RangeInclusive;
 
+use itertools::Itertools;
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
+use rand::seq::SliceRandom;
+
 use crate::core::frontier::{DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
 use crate::util::mini::{max_f64, min_f64};
@@ -9,6 +14,7 @@ pub struct LinearFrontier {
     len: usize,
     // TODO is doing our own indexing and garbage collection faster?
     root_node: Option<Node>,
+    axis_order: Vec<usize>,
 }
 
 // TODO custom drop implementation that doesn't recurse as much?
@@ -22,10 +28,15 @@ enum Node {
 
 impl LinearFrontier {
     pub fn new(dimensions: usize) -> Self {
+        let mut order = (0..dimensions).collect_vec();
+        let mut rng = SmallRng::seed_from_u64(0);
+        order.shuffle(&mut rng);
+        
         Self {
             dimensions,
             len: 0,
             root_node: None,
+            axis_order: order, 
         }
     }
 
@@ -150,7 +161,7 @@ impl LinearFrontier {
         match node {
             Node::Branch { axis, entries } => {
                 // TODO switch to linear search once the list is short enough
-                let new_key = new.get(*axis);
+                let new_key = new.get(self.axis_order[*axis]);
                 let (limit_lower, index_equal, start_higher) = match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
                     Ok(index) => (index, Some(index), index + 1),
                     Err(index) => (index, None, index),
@@ -225,8 +236,8 @@ impl LinearFrontier {
                 // TODO only iterate over axes that either SparseVec has
                 let old = self.get_subtree_sample(&entries[0].1);
                 for split_axis in next_axis..branch_axis {
-                    let old_key = old.get(split_axis);
-                    let new_key = new.get(split_axis);
+                    let old_key = old.get(self.axis_order[split_axis]);
+                    let new_key = new.get(self.axis_order[split_axis]);
                     if old_key == new_key {
                         continue;
                     }
@@ -246,7 +257,7 @@ impl LinearFrontier {
                     return;
                 }
 
-                let new_key = new.get(branch_axis);
+                let new_key = new.get(self.axis_order[branch_axis]);
                 match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
                     Ok(index) => {
                         // existing branch found, continue recursing
@@ -264,8 +275,8 @@ impl LinearFrontier {
                 // find the first different axis
                 // TODO only iterate over existing axes
                 for split_axis in next_axis..self.dimensions {
-                    let old_key = old.get(split_axis);
-                    let new_key = new.get(split_axis);
+                    let old_key = old.get(self.axis_order[split_axis]);
+                    let new_key = new.get(self.axis_order[split_axis]);
 
                     if old_key == new_key {
                         continue;
@@ -292,37 +303,6 @@ impl LinearFrontier {
         }
     }
 
-    // TODO use again or delete
-    // fn split(&mut self, mut entries: Vec<SparseVec>, prev_axis: Option<usize>) -> Node {
-    //     assert!(entries.len() > 1);
-    //
-    //     let start_axis = prev_axis.map_or(0, |axis| (axis + 1) % entries[0].len());
-    //
-    //     // TODO what if we fail to split? this can't happen in dominance luckily enough
-    //
-    //     for axis in chain(start_axis..self.dimensions, 0..start_axis) {
-    //         if let Some(pivot) = sort_pick_pivot(axis, &mut entries) {
-    //             let key = entries[pivot][axis];
-    //             // println!("recurse_add split axis={axis}, value={key}, index={}, entries={:?}", pivot, entries);
-    //
-    //             // TODO reclaim values capacity?
-    //             let entries_right = entries.split_off(pivot);
-    //
-    //             let node_left = Box::new(Node::Leaf(entries));
-    //             let node_right = Box::new(Node::Leaf(entries_right));
-    //
-    //             return Node::Branch {
-    //                 axis,
-    //                 key,
-    //                 node_left,
-    //                 node_right,
-    //             };
-    //         }
-    //     }
-    //
-    //     panic!("failed to find any split axis, are there identical tuples?")
-    // }
-
     pub fn print(&self, max_depth: usize) {
         println!("Tree: len={}", self.len);
 
@@ -348,7 +328,7 @@ impl LinearFrontier {
                     self.recurse_print(e, depth + 1, max_depth);
                 }
             }
-            Node::Leaf(ref vec) => {
+            Node::Leaf(_) => {
                 println!("{:indent$}leaf", "");
             }
         }
@@ -416,7 +396,7 @@ impl LinearFrontier {
     fn get_subtree_axis_value_range(&self, node: &Node, axis: usize) -> Option<RangeInclusive<f64>> {
         let mut range = None;
         self.recurse_for_each_entry(node, 0, |_, e| {
-            let v = e.get(axis);
+            let v = e.get(self.axis_order[axis]);
             range = Some(range.map_or((v, v), |(min, max)| {
                 (min_f64(min, v), max_f64(max, v))
             }));
@@ -431,48 +411,12 @@ impl LinearFrontier {
     }
 }
 
-// TODO start using again or remove
-#[allow(unused)]
-fn sort_pick_pivot(axis: usize, slice: &mut [SparseVec]) -> Option<usize> {
-    let cmp = |a: &SparseVec, b: &SparseVec| a.get(axis).total_cmp(&b.get(axis));
-    slice.sort_unstable_by(cmp);
-
-    let mut pivot_index = None;
-    let mut best_dist = usize::MAX;
-
-    // TODO iterate starting at center
-    for i in 0..slice.len() - 1 {
-        if cmp(&slice[i], &slice[i + 1]).is_eq() {
-            continue;
-        }
-
-        let dist = ((slice.len() + 1) / 2).abs_diff(i);
-        if dist < best_dist {
-            best_dist = dist;
-            pivot_index = Some(i);
-        }
-    }
-
-    if let Some(pivot_index) = pivot_index {
-        for i in 0..slice.len() {
-            if i <= pivot_index {
-                assert!(slice[i].get(axis) <= slice[pivot_index].get(axis));
-            } else {
-                assert!(slice[i].get(axis) > slice[pivot_index].get(axis));
-            }
-        }
-    }
-
-    pivot_index
-}
-
 #[cfg(test)]
 mod test {
     use std::time::Instant;
 
     use itertools::Itertools;
-    use rand::{Rng, SeedableRng};
-    use rand::rngs::SmallRng;
+    use rand::{Rng, thread_rng};
 
     use crate::core::frontier::Frontier;
     use crate::core::linear_frontier::LinearFrontier;
@@ -483,7 +427,8 @@ mod test {
         let dimensions = 16;
         let n = 1024;
 
-        let mut rng = SmallRng::seed_from_u64(0);
+        // let mut rng = SmallRng::seed_from_u64(0);
+        let mut rng = thread_rng();
         let mut frontier = LinearFrontier::new(dimensions);
 
         let mut baseline = Frontier::new();

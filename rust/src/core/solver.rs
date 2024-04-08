@@ -75,6 +75,8 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     let added_linear = ctx.frontier_partial_linear.add_if_not_dominated(state.dom_key_min(problem).0);
 
     // assert_eq!(added_new, added_linear);
+    // assert_eq!(ctx.frontier_partial_new.len(), ctx.frontier_partial_linear.len());
+
     if !added_linear {
         return;
     }

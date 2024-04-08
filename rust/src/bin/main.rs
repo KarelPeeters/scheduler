@@ -82,9 +82,11 @@ fn main_solver(problem: &Problem) {
         old_frontier_costs: vec![],
     };
 
-    let start = Instant::now();
-    solve(&problem, &mut reporter);
-    println!("Solver took {:?}s", start.elapsed().as_secs_f64());
+    loop {
+        let start = Instant::now();
+        solve(&problem, &mut reporter);
+        println!("Solver took {:?}s", start.elapsed().as_secs_f64());
+    }
 }
 
 struct CustomReporter {
@@ -99,7 +101,7 @@ impl Reporter for CustomReporter {
         let index = self.next_index;
         self.next_index += 1;
 
-        println!("New done schedule, index={}, cost={:?}, frontier_size={}", index, cost, frontier.len());
+        // println!("New done schedule, index={}, cost={:?}, frontier_size={}", index, cost, frontier.len());
         state.write_svg_to_file(&problem, format!("ignored/schedules/done/{index}.svg")).unwrap();
 
         // clear frontier dir
@@ -128,7 +130,7 @@ impl Reporter for CustomReporter {
         self.state_counter += 1;
 
         if self.state_counter % 1_000 == 0 {
-            println!("New state, state_counter={}, elapsed={:?}", self.state_counter, self.start.elapsed());
+            // println!("New state, state_counter={}, elapsed={:?}", self.state_counter, self.start.elapsed());
 
             if frontier.len() > 0 {
                 println!("frontier:");
@@ -148,12 +150,12 @@ impl Reporter for CustomReporter {
                 std::fs::write("ignored/depths_new.txt", &depths).unwrap();
             }
 
-            if frontier_linear.len() > 0 {
-                println!("frontier_linear: len={}", frontier_linear.len());
-
-                let depths = format!("{:?}", frontier_linear.collect_entry_depths());
-                std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
-            }
+            // if frontier_linear.len() > 0 {
+            //     println!("frontier_linear: len={}", frontier_linear.len());
+            // 
+            //     let depths = format!("{:?}", frontier_linear.collect_entry_depths());
+            //     std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
+            // }
 
             let index = self.next_index;
             self.next_index += 1;
