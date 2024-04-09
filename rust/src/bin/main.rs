@@ -76,7 +76,8 @@ fn main_solver(problem: &Problem) {
     std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
 
     let mut reporter = CustomReporter {
-        next_index: 0,
+        next_done_index: 0,
+        next_partial_index: 0,
         state_counter: 0,
         start: Instant::now(),
         old_frontier_costs: vec![],
@@ -88,7 +89,8 @@ fn main_solver(problem: &Problem) {
 }
 
 struct CustomReporter {
-    next_index: u64,
+    next_done_index: u64,
+    next_partial_index: u64,
     state_counter: u64,
     start: Instant,
     old_frontier_costs: Vec<Cost>,
@@ -96,8 +98,8 @@ struct CustomReporter {
 
 impl Reporter for CustomReporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
-        let index = self.next_index;
-        self.next_index += 1;
+        let index = self.next_done_index;
+        self.next_done_index += 1;
 
         // println!("New done schedule, index={}, cost={:?}, frontier_size={}", index, cost, frontier.len());
         state.write_svg_to_file(&problem, format!("ignored/schedules/done/{index}.svg")).unwrap();
@@ -155,8 +157,8 @@ impl Reporter for CustomReporter {
                 std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
             }
 
-            let index = self.next_index;
-            self.next_index += 1;
+            let index = self.next_partial_index;
+            self.next_partial_index += 1;
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
         }
     }
@@ -164,7 +166,7 @@ impl Reporter for CustomReporter {
 
 fn build_problem() -> Problem {
     // parameters
-    let hardware_depth = 4;
+    let hardware_depth = 2;
     let mem_size_ext = None;
     let mem_size_chip = None;
     let bandwidth_ext = 1.0;
@@ -175,14 +177,14 @@ fn build_problem() -> Problem {
     let alloc_energy = 100.0;
     let alloc_time_energy_factors = vec![
         ("mid", 1.0, 1.0),
-        ("efficient", 1.5, 0.5),
-        ("fast", 0.8, 2.0),
+        // ("efficient", 1.5, 0.5),
+        // ("fast", 0.8, 2.0),
     ];
 
     let graph_depth = 4;
     let graph_branching = 2;
     let graph_node_size = 1000;
-    let graph_weight_size = None; //1000;
+    let graph_weight_size = Some(graph_node_size);
     let graph_cross = false;
 
     // hardware
