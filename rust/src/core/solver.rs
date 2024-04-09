@@ -119,12 +119,6 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
         }
     }
 
-    // wait for first operation to finish
-    if let Some(first_done_time) = state.first_done_time() {
-        let state_next = state.clone_and_then(|n| n.do_action_wait(problem, first_done_time));
-        recurse(ctx, state_next);
-    }
-
     // start core operations
     for alloc in problem.allocations() {
         recurse_try_alloc(ctx, &mut state, alloc);
@@ -133,6 +127,13 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     // start channel operations
     for channel in problem.hardware.channels() {
         recurse_try_channel(ctx, &mut state, channel);
+    }
+
+    // wait for first operation to finish
+    // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
+    if let Some(first_done_time) = state.first_done_time() {
+        let state_next = state.clone_and_then(|n| n.do_action_wait(problem, first_done_time));
+        recurse(ctx, state_next);
     }
 }
 

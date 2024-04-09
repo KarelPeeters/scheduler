@@ -102,7 +102,7 @@ impl State {
             // centered text
             writeln!(
                 f,
-                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='middle' transform='rotate(20 {x} {y})'>{t}</text>",
+                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='middle' transform='rotate(30 {x} {y})'>{t}</text>",
                 x = time_to_x((t_min + t_max) / 2.0),
                 y = row_to_y(row) + row_height / 2.0,
                 t = text,
