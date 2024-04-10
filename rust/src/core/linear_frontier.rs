@@ -146,17 +146,7 @@ impl LinearFrontier {
     ///     Some old entries that were dominated by `new` may have been dropped.
     #[inline(never)]
     fn recurse_drop_and_check_dom(&mut self, node: &mut Node, new: &SparseVec, branch_new_any_better: bool, branch_new_any_worse: bool, entries_checked: &mut usize) -> (bool, bool) {
-        // TODO move this up one level and turn this into an assert?
-        // TODO with this tree search thing it's even more important, since we can skip an entire loop
-        if branch_new_any_better && branch_new_any_worse {
-            // println!("add incomparable, give up");
-            return (
-                // no old dominating found
-                false,
-                // no entries were dropped, so we can't be empty
-                false,
-            );
-        }
+        assert!(!(branch_new_any_better && branch_new_any_worse), "should have been filtered out at a higher level");
 
         match node {
             Node::Branch { axis, entries } => {
@@ -180,11 +170,22 @@ impl LinearFrontier {
                     next_index += 1;
 
                     let (better, worse) = if index < limit_lower {
+                        // TODO turn this into piecewise iteration instead
+                        if branch_new_any_better {
+                            return true;
+                        }
+                        
                         (branch_new_any_better, true)
                     } else if Some(index) == index_equal {
                         (branch_new_any_better, branch_new_any_worse)
                     } else {
                         assert!(index >= start_higher);
+
+                        // TODO turn this into piecewise iteration instead
+                        if branch_new_any_worse {
+                            return true;
+                        }
+                        
                         (true, branch_new_any_worse)
                     };
 
