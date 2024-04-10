@@ -97,7 +97,7 @@ struct CustomReporter {
 }
 
 impl Reporter for CustomReporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, _cost: Cost, state: &State) {
         let index = self.next_done_index;
         self.next_done_index += 1;
 
@@ -207,7 +207,7 @@ fn build_problem() -> Problem {
 
         // channel
         let (channel_id, mem_prev, bandwidth, energy) = if i == 0 {
-            (format!("channel_ext_0"), mem_ext, bandwidth_ext, energy_ext)
+            ("channel_ext_0".to_string(), mem_ext, bandwidth_ext, energy_ext)
         } else {
             (format!("channel_chip_{}", i), mem_core[i - 1], bandwidth_chip, energy_chip)
         };
@@ -233,7 +233,7 @@ fn build_problem() -> Problem {
     // graph
     let mut graph = Graph::new("graph");
     let node_input = graph.add_node(NodeInfo {
-        id: format!("node-input"),
+        id: "node-input".to_string(),
         size_bits: graph_node_size,
         inputs: vec![],
     });
@@ -266,7 +266,7 @@ fn build_problem() -> Problem {
         prev = next;
     }
     let node_output = graph.add_node(NodeInfo {
-        id: format!("node-output"),
+        id: "node-output".to_string(),
         size_bits: graph_node_size,
         inputs: prev,
     });

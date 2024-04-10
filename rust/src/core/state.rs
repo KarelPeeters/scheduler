@@ -549,6 +549,7 @@ impl State {
         }
 
         // value states
+        // TODO is this actually valid?
         for value in problem.graph.nodes() {
             key.push(next_index(), self.value_dom_key_min(value));
         }
