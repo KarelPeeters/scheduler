@@ -186,6 +186,7 @@ fn build_problem() -> Problem {
     let graph_node_size = 1000;
     let graph_weight_size = Some(graph_node_size);
     let graph_cross = false;
+    let share_group = false;
 
     // hardware
     let mut hardware = Hardware::new("hardware");
@@ -196,22 +197,28 @@ fn build_problem() -> Problem {
     let mut core_groups = vec![];
 
     for i in 0..hardware_depth {
-        core_groups.push(hardware.add_group(GroupInfo { id: format!("core_{i}") }));
+        // core group
+        let core_group = hardware.add_group(GroupInfo { id: format!("core_{i}") });
+        core_groups.push(core_group);
 
+        // memory
         let mem_curr = hardware.add_memory(MemoryInfo { id: format!("mem_chip_{}", i), size_bits: mem_size_chip });
         mem_core.push(mem_curr);
 
-        let (id, mem_prev, bandwidth, energy) = if i == 0 {
+        // channel
+        let (channel_id, mem_prev, bandwidth, energy) = if i == 0 {
             (format!("channel_ext_0"), mem_ext, bandwidth_ext, energy_ext)
         } else {
             (format!("channel_chip_{}", i), mem_core[i - 1], bandwidth_chip, energy_chip)
         };
-
-        let channel_group = hardware.add_group(GroupInfo { id: id.clone() });
-
+        let channel_group = if share_group {
+            core_group
+        } else {
+            hardware.add_group(GroupInfo { id: channel_id.clone() })
+        };
         for (dir, mem_source, mem_dest) in [("fwd", mem_prev, mem_curr), ("bck", mem_curr, mem_prev)] {
             let channel_info = ChannelInfo {
-                id: format!("{id}_{dir}"),
+                id: format!("{channel_id}_{dir}"),
                 group: channel_group,
                 mem_source,
                 mem_dest,
