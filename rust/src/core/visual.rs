@@ -69,33 +69,37 @@ impl State {
         }
 
         // vertical lines and labels
-        for t in pick_axis_ticks(time_max, 20) {
+        for (t, label) in pick_axis_ticks(time_max, 20) {
             let x = time_to_x(t);
-            writeln!(
-                f,
-                "<line x1='{x}' y1='{y1}' x2='{x}' y2='{y2}' stroke='grey' stroke-dasharray='5,5' />",
-                x = x,
-                y1 = padding_ver,
-                y2 = figure_height - padding_ver + tick_size,
-            )?;
-            writeln!(
-                f,
-                "<text x='{x}' y='{y}' dominant-baseline='hanging' text-anchor='middle'>{t}</text>",
-                x = x,
-                y = figure_height - padding_ver + tick_size * 2.0,
-                t = t,
-            )?;
+            if t != 0.0 {
+                writeln!(
+                    f,
+                    "<line x1='{x}' y1='{y1}' x2='{x}' y2='{y2}' stroke='grey' stroke-dasharray='5,5' />",
+                    x = x,
+                    y1 = padding_ver,
+                    y2 = figure_height - padding_ver + tick_size,
+                )?;
+            }
+            if label {
+                writeln!(
+                    f,
+                    "<text x='{x}' y='{y}' dominant-baseline='hanging' text-anchor='middle'>{t}</text>",
+                    x = x,
+                    y = figure_height - padding_ver + tick_size * 2.0,
+                    t = t,
+                )?;
+            }
         }
 
         // draw action rectangles
         let rect = |f: &mut F, row, t_min, t_max, color, text: &str| {
             writeln!(
                 f,
-                "<rect x='{x}' y='{y}' width='{w}' height='{h}' fill='none' stroke='{c}' />",
+                "<rect x='{x}' y='{y}' width='{w}' height='{h}' stroke='{c}' stoke-width='1pt' fill='{c}' fill-opacity='0.2' />",
                 x = time_to_x(t_min),
-                y = row_to_y(row),
+                y = row_to_y(row) + 0.5,
                 w = time_to_x(t_max) - time_to_x(t_min),
-                h = row_height,
+                h = row_height - 1.0,
                 c = color,
             )?;
 
@@ -159,17 +163,26 @@ impl State {
     }
 }
 
-fn pick_axis_ticks(max_value: f64, _max_ticks: usize) -> Vec<f64> {
+fn pick_axis_ticks(max_value: f64, _max_ticks: usize) -> Vec<(f64, bool)> {
     // TODO improve this
+    let step_size = 5_000.0;
+
     let mut ticks = Vec::new();
     let mut curr = 0.0;
     while curr <= max_value {
-        ticks.push(curr);
-        curr += 5_000.0;
+        ticks.push((curr, true));
+        curr += step_size;
     }
+
     if curr != max_value {
-        ticks.push(max_value);
+        if let Some(last) = ticks.last_mut() {
+            if max_value < last.0 + step_size / 3.0 {
+                last.1 = false;
+            }
+        }
+        ticks.push((max_value, true));
     }
+
     ticks
 }
 

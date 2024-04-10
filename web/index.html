@@ -5,21 +5,25 @@
 
 <script>
     let row = 0;
-    let index = 1;
+    let index = 0;
 
     document.onkeydown = function(e) {
         if (e != null) {
             if (e.keyCode === 37) {
                 index = Math.max(0, index - 1);
+                e.preventDefault();
             } else if (e.keyCode === 39) {
                 index += 1;
+                e.preventDefault();
             } else if (e.keyCode === 38) {
                 row = Math.max(0, row - 1);
+                e.preventDefault();
             } else if (e.keyCode === 40) {
-                row += 1;
+                row = Math.min(3, row + 1);
+                e.preventDefault();
             } else if (e.keyCode === 36) {
-                row = 0;
-                index = 1;
+                index = 0;
+                e.preventDefault();
             }
         }
 
