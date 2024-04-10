@@ -489,6 +489,20 @@ impl State {
         self.tried_allocs = tried_allocs;
     }
 
+    fn value_dom_key_min(&self, value: Node) -> f64 {
+        if self.value_remaining_unstarted_uses[value.0] == 0 {
+            // dead
+            return f64::NEG_INFINITY;
+        }
+        if !self.unstarted_nodes.contains(&value) {
+            // started, maybe even done
+            // TODO get time here
+            return 0.0;
+        }
+        // not even scheduled, worst case
+        return f64::INFINITY;
+    }
+
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> f64 {
         if self.value_remaining_unstarted_uses[value.0] == 0 {
             // dead, best possible case
@@ -534,7 +548,13 @@ impl State {
             key.push(next_index(), v);
         }
 
+        // value states
+        for value in problem.graph.nodes() {
+            key.push(next_index(), self.value_dom_key_min(value));
+        }
+
         // value availability
+        // TODO we should be able to fully skip this during comparisons if the value states don't match
         for mem in problem.hardware.memories() {
             for value in problem.graph.nodes() {
                 key.push(next_index(), self.value_mem_dom_key_min(value, mem));
