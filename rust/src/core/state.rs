@@ -31,7 +31,7 @@ pub struct State {
     pub trigger_group_free: Vec<bool>,
     pub trigger_value_mem_available: Vec<Vec<bool>>,
     pub trigger_value_mem_unlocked: Vec<Vec<bool>>,
-    pub trigger_mem_usage_decreased: Vec<(u64, u64)>,
+    pub trigger_mem_usage_decreased: Vec<Option<(u64, u64)>>,
 
     // filtering (attempt -> most recent time range)
     pub tried_allocs: HashMap<Allocation, TimeRange>,
@@ -114,7 +114,7 @@ impl State {
             trigger_group_free: vec![false; group_count],
             trigger_value_mem_available: vec![vec![false; mem_count]; node_count],
             trigger_value_mem_unlocked: vec![vec![false; mem_count]; node_count],
-            trigger_mem_usage_decreased: vec![],
+            trigger_mem_usage_decreased: vec![None; mem_count],
             tried_allocs: HashMap::new(),
             tried_transfers: HashMap::new(),
         }
@@ -255,10 +255,10 @@ impl State {
 
     pub fn clear_triggers(&mut self) {
         self.trigger_everything = false;
-        self.trigger_group_free.iter_mut().for_each(|x| *x = false);
-        self.trigger_value_mem_available.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
-        self.trigger_value_mem_unlocked.iter_mut().for_each(|x| x.iter_mut().for_each(|x| *x = false));
-        self.trigger_mem_usage_decreased.clear();
+        self.trigger_group_free.fill(false);
+        self.trigger_value_mem_available.iter_mut().for_each(|x| x.fill(false));
+        self.trigger_value_mem_unlocked.iter_mut().for_each(|x| x.fill(false));
+        self.trigger_mem_usage_decreased.fill(None);
     }
 
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
@@ -320,7 +320,7 @@ impl State {
         *trigger = true;
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) -> Result<(), ()> {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -332,7 +332,7 @@ impl State {
         self.clear_triggers();
         self.maybe_clear_tried(problem);
 
-        // complete core operations
+        // complete operations
         for group in problem.hardware.groups() {
             if let Some(action) = self.state_group[group.0] {
                 if action.time().end > time_end {
@@ -358,6 +358,47 @@ impl State {
                 self.release_group(group);
             }
         }
+
+        // drop dead values from memories
+        for mem_i in 0..self.state_memory_node.len() {
+            let mem = Memory(mem_i);
+            let used_before = self.mem_space_used(problem, mem);
+
+            let mem_content = &mut self.state_memory_node[mem.0];
+            let mut exit = false;
+
+            mem_content.retain(|value, &mut availability| {
+                if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
+                    let dead = self.value_remaining_unstarted_uses[value.0] == 0;
+
+                    if dead && read_count == 0 {
+                        // TODO don't do this, just delete the operation but keep going?
+                        // prune this branch if we're dropping values that haven't been used,
+                        //   we should have avoided copying them in the first place!
+                        exit = true;
+                        return true;
+                    }
+
+                    read_lock_count > 0 || !dead
+                } else {
+                    true
+                }
+            });
+
+            if exit {
+                return Err(());
+            }
+
+            let used_after = self.mem_space_used(problem, mem);
+            if used_before != used_after {
+                let slot = &mut self.trigger_mem_usage_decreased[mem.0];
+                let new = (used_before, used_after);
+                assert!(slot.is_none() || *slot == Some(new));
+                *slot = Some(new);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
@@ -592,14 +633,22 @@ impl Trigger<'_> {
                 self.result(true, false)
             }
             Some(mem_size) => {
-                // fits if fits, trigger if fit changed
+                // fits if fits
+                //  note: this has to be separate from the trigger calculation, we might have made even more space since then
+                //  TODO is that note actually true?
                 let used = self.state.mem_space_used(problem, mem);
-                let (before, after) = self.state.trigger_mem_usage_decreased[mem.0];
+                let fits = used + size_bits <= mem_size;
 
-                self.result(
-                    used + size_bits <= mem_size,
-                    before + size_bits > mem_size && after + size_bits < mem_size,
-                )
+                // trigger if fit changed
+                let triggered = if let Some((before, after)) = self.state.trigger_mem_usage_decreased[mem.0] {
+                    let fit_before = before + size_bits <= mem_size;
+                    let fit_after = after + size_bits <= mem_size;
+                    fit_after && !fit_before
+                } else {
+                    false
+                };
+
+                self.result(fits, triggered)
             }
         }
     }

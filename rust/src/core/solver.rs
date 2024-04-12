@@ -3,8 +3,8 @@ use itertools::{Itertools, zip_eq};
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
 use crate::core::new_frontier::NewFrontier;
-use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
-use crate::core::state::{Cost, State, ValueState};
+use crate::core::problem::{Allocation, Channel, Node, Problem};
+use crate::core::state::{Cost, State};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
@@ -82,43 +82,6 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     }
     ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, ctx.frontier_partial_linear, &state);
 
-    // drop dead values from memories
-    // TODO only do this after wait?
-    for mem_i in 0..state.state_memory_node.len() {
-        let mem = Memory(mem_i);
-        let used_before = state.mem_space_used(problem, mem);
-
-        let mem_content = &mut state.state_memory_node[mem.0];
-        let mut exit = false;
-        
-        mem_content.retain(|value, &mut availability| {
-            if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
-                let dead = state.value_remaining_unstarted_uses[value.0] == 0;
-                
-                if dead && read_count == 0 {
-                    // TODO don't do this, just delete the operation but keep going?
-                    // prune this branch if we're dropping values that haven't been used,
-                    //   we should have avoided copying them in the first place!
-                    exit = true;
-                    return true;
-                }
-                
-                read_lock_count > 0 || !dead
-            } else {
-                true
-            }
-        });
-        
-        if exit {
-            return
-        }
-
-        let used_after = state.mem_space_used(problem, mem);
-        if used_before != used_after {
-            state.trigger_mem_usage_decreased.push((used_before, used_after));
-        }
-    }
-
     // start core operations
     for alloc in problem.allocations() {
         recurse_try_alloc(ctx, &mut state, alloc);
@@ -132,7 +95,10 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     // wait for first operation to finish
     // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
     if let Some(first_done_time) = state.first_done_time() {
-        let state_next = state.clone_and_then(|n| n.do_action_wait(problem, first_done_time));
+        let mut state_next = state.clone();
+        if state_next.do_action_wait(problem, first_done_time).is_err() {
+            return;
+        }
         recurse(ctx, state_next);
     }
 }
