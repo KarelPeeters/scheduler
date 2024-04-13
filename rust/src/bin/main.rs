@@ -106,7 +106,14 @@ fn main_solver(problem: &Problem) {
     };
 
     let start = Instant::now();
-    solve(&problem, &mut reporter);
+
+    let frontier = solve(&problem, &mut reporter);
+
+    println!("Frontier:");
+    for (c, _) in frontier.iter_arbitrary().sorted_by_key(|(c, _)| (OrderedFloat(c.time), OrderedFloat(c.energy))) {
+        println!("  {:?}", c);
+    }
+
     println!("Solver took {:?}s", start.elapsed().as_secs_f64());
 }
 
