@@ -1,7 +1,9 @@
+<!DOCTYPE html>
 <html lang="en">
 
-<h1>frontier-1</h1>
-<img src="../rust/ignored/schedules/frontier/0.svg" alt="missing">
+<h1 id="title">frontier-1</h1>
+<img id="image" alt="missing" src="">
+<div id="text" style="white-space: pre; font-family: monospace"></div>
 
 <script>
     let row = 0;
@@ -27,24 +29,47 @@
             }
         }
 
-        var src = "src";
-        var title = "title";
+        var src = "";
+        var title = "Title";
+        var text_src = null;
+
         if (row == 0) {
-            src = `../rust/ignored/schedules/frontier.svg`
             title = `frontier`;
+            src = `../rust/ignored/schedules/frontier.svg`
         } else if (row == 1) {
-            src = `../rust/ignored/schedules/frontier/${index}.svg`
             title = `frontier-${index}`;
+            src = `../rust/ignored/schedules/frontier/${index}.svg`
         } else if (row == 2) {
-            src = `../rust/ignored/schedules/done/${index}.svg`
             title = `done-${index}`;
+            src = `../rust/ignored/schedules/done/${index}.svg`
         } else if (row == 3) {
-            src = `../rust/ignored/schedules/partial/${index}.svg`
             title = `partial-${index}`;
+            src = `../rust/ignored/schedules/partial/${index}.svg`
+            text_src = `../rust/ignored/schedules/partial/${index}.txt`
         }
 
-        document.querySelector('h1').textContent = title;
-        document.querySelector('img').src = src;
+        document.getElementById('title').textContent = title;
+        document.getElementById('image').src = src;
+
+        text_div = document.getElementById('text');
+
+        if (text_src != null) {
+            fetch(text_src)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.text();
+                })
+                .then(text => {
+                    text_div.textContent = text;
+                })
+                .catch(error => {
+                    text_div.textContent = "";
+                });
+        } else {
+            text_div.textContent = "";
+        }
     };
 
     document.onkeydown(null);

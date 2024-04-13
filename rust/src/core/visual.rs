@@ -1,10 +1,14 @@
+use std::convert::identity;
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use crate::core::frontier::Frontier;
 
+use itertools::Itertools;
+
+use crate::core::frontier::Frontier;
 use crate::core::problem::Problem;
-use crate::core::schedule::{Action};
+use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
 
 impl State {
@@ -160,6 +164,71 @@ impl State {
         f.flush()?;
         drop(f);
         Ok(())
+    }
+
+    pub fn summary_string(&self, problem: &Problem) -> String {
+        fn inner(s: &State, problem: &Problem, f: &mut String) -> std::fmt::Result {
+            writeln!(f, "Basics:")?;
+            writeln!(f, "  curr_time={}", s.curr_time)?;
+            writeln!(f, "  curr_energy={}", s.curr_energy)?;
+            writeln!(f, "  minimum_time={}", s.minimum_time)?;
+            writeln!(f)?;
+
+            writeln!(f, "Memory:")?;
+            for mem in problem.hardware.memories() {
+                let info = &problem.hardware.mem_info[mem.0];
+                writeln!(f, "  memory '{}': used {}/{:?}", &info.id, s.mem_space_used(problem, mem), info.size_bits)?;
+
+                // iterate ourselves to keep order
+                for value in problem.graph.nodes() {
+                    if let Some(state) = s.state_memory_node[mem.0].get(&value) {
+                        let value_info = &problem.graph.node_info[value.0];
+                        writeln!(f, "    contains '{}' with size {}, state {:?}", value_info.id, value_info.size_bits, state)?;
+                    }
+                }
+            }
+            writeln!(f)?;
+
+            writeln!(f, "Triggers:")?;
+            writeln!(f, "  everything: {}", s.trigger_everything)?;
+
+            let trigger_group_free_str = s.trigger_group_free.iter().copied().positions(identity)
+                .map(|g| format!("group '{}'", problem.hardware.group_info[g].id))
+                .join(", ");
+            writeln!(f, "  group_free: {}", trigger_group_free_str)?;
+
+            let trigger_value_mem_available_str = s.trigger_value_mem_available.iter().enumerate().flat_map(|(v, mems)| {
+                mems.iter().copied().positions(identity).map(move |m| (v, m))
+            }).map(|(v, m)| {
+                let value_info = &problem.graph.node_info[v];
+                let mem_info = &problem.hardware.mem_info[m];
+                format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
+            }).join(", ");
+            writeln!(f, "  value_mem_available: {}", trigger_value_mem_available_str)?;
+
+            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked.iter().enumerate().flat_map(|(v, mems)| {
+                mems.iter().copied().positions(identity).map(move |m| (v, m))
+            }).map(|(v, m)| {
+                let value_info = &problem.graph.node_info[v];
+                let mem_info = &problem.hardware.mem_info[m];
+                format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
+            }).join(", ");
+            writeln!(f, "  value_mem_unlocked: {}", trigger_value_mem_unlocked)?;
+
+            let trigger_mem_usage_decreased_str = s.trigger_mem_usage_decreased.iter().enumerate().filter_map(|(v, mems)| {
+                mems.map(move |delta| (v, delta))
+            }).map(|(v, delta)| {
+                let mem_info = &problem.hardware.mem_info[v];
+                format!("memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
+            }).join(", ");
+            writeln!(f, "  mem_usage_decreased: {}", trigger_mem_usage_decreased_str)?;
+
+            Ok(())
+        }
+
+        let mut result = String::new();
+        inner(self, problem, &mut result).unwrap();
+        result
     }
 }
 

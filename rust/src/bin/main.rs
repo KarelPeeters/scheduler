@@ -189,7 +189,10 @@ impl Reporter for CustomReporter {
 
             let index = self.next_partial_index;
             self.next_partial_index += 1;
+
+            println!("Saving state as partial index {index}");
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
+            std::fs::write(format!("ignored/schedules/partial/{index}.txt"), state.summary_string(problem)).unwrap();
         }
     }
 }
