@@ -9,13 +9,34 @@ use ordered_float::OrderedFloat;
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
 use rust::core::new_frontier::NewFrontier;
-use rust::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
+use rust::core::problem::Problem;
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
+use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
 use rust::util::mini::IterFloatExt;
 
 fn main() {
-    let problem = build_problem();
+    let problem = test_problem(
+        TestGraphParams {
+            depth: 0,
+            branches: 0,
+            cross: false,
+            node_size: 1000,
+            weight_size: None,
+        },
+        TestHardwareParams {
+            core_count: 1,
+            share_group: false,
+            mem_size_ext: None,
+            mem_size_int: None,
+            time_per_bit_ext: 1.0,
+            time_per_bit_int: 0.5,
+            energy_per_bit_ext: 2.0,
+            energy_per_bit_int: 1.0,
+        },
+        &[("basic", 4000.0, 1000.0)],
+    );
+    
     problem.hardware.to_graphviz(problem.core_connected_memories()).export("ignored/hardware.svg").unwrap();
     problem.graph.to_graphviz().export("ignored/graph.svg").unwrap();
     problem.assert_valid();
@@ -161,145 +182,5 @@ impl Reporter for CustomReporter {
             self.next_partial_index += 1;
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
         }
-    }
-}
-
-fn build_problem() -> Problem {
-    // parameters
-    let hardware_depth = 2;
-    let mem_size_ext = None;
-    let mem_size_chip = None;
-    let bandwidth_ext = 1.0;
-    let bandwidth_chip = 2.0;
-    let energy_ext = 2.0;
-    let energy_chip = 1.0;
-    let alloc_time = 4000.0;
-    let alloc_energy = 100.0;
-    let alloc_time_energy_factors = vec![
-        ("mid", 1.0, 1.0),
-        // ("efficient", 1.5, 0.5),
-        // ("fast", 0.8, 2.0),
-    ];
-
-    let graph_depth = 4;
-    let graph_branching = 2;
-    let graph_node_size = 1000;
-    let graph_weight_size = Some(graph_node_size);
-    let graph_cross = false;
-    let share_group = false;
-
-    // hardware
-    let mut hardware = Hardware::new("hardware");
-
-    let mem_ext = hardware.add_memory(MemoryInfo { id: "mem_ext".to_owned(), size_bits: mem_size_ext });
-
-    let mut mem_core = vec![];
-    let mut core_groups = vec![];
-
-    for i in 0..hardware_depth {
-        // core group
-        let core_group = hardware.add_group(GroupInfo { id: format!("core_{i}") });
-        core_groups.push(core_group);
-
-        // memory
-        let mem_curr = hardware.add_memory(MemoryInfo { id: format!("mem_chip_{}", i), size_bits: mem_size_chip });
-        mem_core.push(mem_curr);
-
-        // channel
-        let (channel_id, mem_prev, bandwidth, energy) = if i == 0 {
-            ("channel_ext_0".to_string(), mem_ext, bandwidth_ext, energy_ext)
-        } else {
-            (format!("channel_chip_{}", i), mem_core[i - 1], bandwidth_chip, energy_chip)
-        };
-        let channel_group = if share_group {
-            core_group
-        } else {
-            hardware.add_group(GroupInfo { id: channel_id.clone() })
-        };
-        for (dir, mem_source, mem_dest) in [("fwd", mem_prev, mem_curr), ("bck", mem_curr, mem_prev)] {
-            let channel_info = ChannelInfo {
-                id: format!("{channel_id}_{dir}"),
-                group: channel_group,
-                mem_source,
-                mem_dest,
-                latency: 0.0,
-                time_per_bit: 1.0 / bandwidth,
-                energy_per_bit: energy,
-            };
-            hardware.add_channel(channel_info);
-        }
-    }
-
-    // graph
-    let mut graph = Graph::new("graph");
-    let node_input = graph.add_node(NodeInfo {
-        id: "node-input".to_string(),
-        size_bits: graph_node_size,
-        inputs: vec![],
-    });
-    graph.add_input(node_input);
-    let mut prev = vec![node_input];
-    for i_depth in 0..graph_depth {
-        let next = (0..graph_branching).map(|i_branch| {
-            let mut inputs = if graph_cross || i_depth == 0 {
-                prev.clone()
-            } else {
-                vec![prev[i_branch]]
-            };
-
-            if let Some(graph_weight_size) = graph_weight_size {
-                let weight = graph.add_node(NodeInfo {
-                    id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-                    size_bits: graph_weight_size,
-                    inputs: vec![],
-                });
-                graph.add_input(weight);
-                inputs.push(weight);
-            }
-            
-            graph.add_node(NodeInfo {
-                id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-                size_bits: graph_node_size,
-                inputs,
-            })
-        }).collect_vec();
-        prev = next;
-    }
-    let node_output = graph.add_node(NodeInfo {
-        id: "node-output".to_string(),
-        size_bits: graph_node_size,
-        inputs: prev,
-    });
-    graph.add_output(node_output);
-
-    // allocations
-    let mut allocations = vec![];
-    for (i, &core_group) in enumerate(&core_groups) {
-        for node in graph.nodes() {
-            for &(name, time_factor, energy_factor) in &alloc_time_energy_factors {
-                allocations.push(AllocationInfo {
-                    id: name.to_string(),
-                    group: core_group,
-                    node,
-                    input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
-                    output_memory: mem_core[i],
-                    time: alloc_time * time_factor,
-                    energy: alloc_energy * energy_factor,
-                });
-            }
-        }
-    }
-
-    // boundary conditions
-    let input_placements = vec![mem_ext; graph.inputs.len()];
-    let output_placements = vec![mem_ext; graph.outputs.len()];
-
-    Problem {
-        id: "problem".to_owned(),
-        hardware,
-        graph,
-        allocation_info: allocations,
-        input_placements,
-        output_placements,
     }
 }

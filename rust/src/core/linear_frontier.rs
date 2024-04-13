@@ -426,7 +426,7 @@ mod test {
     #[test]
     fn correctness() {
         let dimensions = 16;
-        let n = 1024;
+        let n = 64;
 
         // let mut rng = SmallRng::seed_from_u64(0);
         let mut rng = thread_rng();

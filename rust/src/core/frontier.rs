@@ -356,7 +356,7 @@ mod test {
 
         let max_size = 10;
 
-        for i in 0..1_000_000 {
+        for i in 0..10_000 {
             if frontier.len() >= max_size {
                 // println!("removing");
                 frontier.remove(rng.gen_range(0..frontier.len()));

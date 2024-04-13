@@ -107,6 +107,9 @@
 * Allow cyclic requirement: certain values must be _somewhere_, but allocation is free to choose where.
 * Also allow multiple inputs and outputs places for a single value.
 
+* Allow actions that take zero time, energy and only deal with values of size 0.
+  * These might be used to encode extra runtime dependencies?
+
 # Test cases
 * simple network
 * disastrous highly symmetric hardware and network

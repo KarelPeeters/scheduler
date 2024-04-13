@@ -28,7 +28,7 @@ pub struct Context<'p, 'r, 'f, R: Reporter> {
     frontier_partial_linear: &'f mut LinearFrontier,
 }
 
-pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
+pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, State> {
     let state = State::new(problem);
     
     let mut frontier_done = Frontier::new();
@@ -46,6 +46,8 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) {
     };
 
     recurse(&mut ctx, state);
+
+    frontier_done
 }
 
 // TODO split this up into smaller functions

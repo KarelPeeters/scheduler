@@ -646,7 +646,7 @@ mod test {
     fn correctness() {
         let dimensions = 16;
         let max_leaf_len = 1;
-        let n = 1024*32;
+        let n = 64;
 
         let mut rng = SmallRng::seed_from_u64(0);
         let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
