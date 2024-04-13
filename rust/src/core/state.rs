@@ -583,7 +583,8 @@ impl State {
         // group availability
         for group in problem.hardware.groups() {
             let v = match self.state_group[group.0] {
-                None => self.curr_time,
+                // TODO go back to using current time here? that fails with actions that take zero time
+                None => f64::NEG_INFINITY,
                 Some(action) => action.time().end,
             };
             key.push(next_index(), v);

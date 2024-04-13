@@ -102,6 +102,7 @@ fn main_solver(problem: &Problem) {
         state_counter: 0,
         start: Instant::now(),
         old_frontier_costs: vec![],
+        partial_plot_frequency: 1000,
     };
 
     let start = Instant::now();
@@ -115,6 +116,7 @@ struct CustomReporter {
     state_counter: u64,
     start: Instant,
     old_frontier_costs: Vec<Cost>,
+    partial_plot_frequency: u64,
 }
 
 impl Reporter for CustomReporter {
@@ -150,7 +152,7 @@ impl Reporter for CustomReporter {
     fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, frontier_linear: &mut LinearFrontier, state: &State) {
         self.state_counter += 1;
 
-        if self.state_counter % 1_000 == 0 {
+        if self.state_counter % self.partial_plot_frequency == 0 {
             // println!("New state, state_counter={}, elapsed={:?}", self.state_counter, self.start.elapsed());
 
             if frontier.len() > 0 {
