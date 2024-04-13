@@ -26,11 +26,12 @@ pub struct State {
     pub value_remaining_unstarted_uses: Vec<u32>,
 
     // triggers
-    // TODO add value dropped trigger
     pub trigger_everything: bool,
     pub trigger_group_free: Vec<bool>,
     pub trigger_value_mem_available: Vec<Vec<bool>>,
+    // TODO set to false again for dead values? 
     pub trigger_value_mem_unlocked: Vec<Vec<bool>>,
+    // TODO don't track this for inf-sized memories?
     pub trigger_mem_usage_decreased: Vec<Option<(u64, u64)>>,
 
     // filtering (attempt -> most recent time range)
@@ -233,9 +234,15 @@ impl State {
 
     pub fn mem_space_used(&self, problem: &Problem, mem: Memory) -> u64 {
         // TODO update incrementally
-        self.state_memory_node[mem.0].iter()
+        let used = self.state_memory_node[mem.0].iter()
             .map(|(&value, _)| problem.graph.node_info[value.0].size_bits)
-            .sum()
+            .sum();
+
+        if let Some(mem_size_bits) = problem.hardware.mem_info[mem.0].size_bits {
+            assert!(used <= mem_size_bits);
+        }
+
+        used
     }
 
     pub fn new_trigger(&self) -> Trigger {
@@ -305,6 +312,33 @@ impl State {
             ValueState::AvailableAtTime(_) => {
                 assert_eq!(prev, None);
             }
+        }
+    }
+
+    pub fn drop_value(&mut self, problem: &Problem, mem: Memory, value: Node) {
+        // get value before removal
+        let mem_space_used_before = self.mem_space_used(problem, mem);
+        let value_size_bits = problem.graph.node_info[value.0].size_bits;
+
+        let mem_size_bits = problem.hardware.mem_info[mem.0].size_bits;
+        if let Some(mem_size_bits) = mem_size_bits {
+            assert!(mem_space_used_before <= mem_size_bits);
+        }
+
+        // remove
+        let prev = self.state_memory_node[mem.0].remove(&value);
+        assert!(matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _ })));
+        assert!(prev.is_some());
+
+        // update memory usage trigger
+        let slot = &mut self.trigger_mem_usage_decreased[mem.0];
+        if let Some((_, after)) = slot {
+            // further decrease memory used
+            assert!(*after >= value_size_bits);
+            *after -= value_size_bits;
+        } else {
+            // mark first memory decrease
+            *slot = Some((mem_space_used_before, mem_space_used_before - value_size_bits));
         }
     }
 
@@ -608,6 +642,13 @@ impl State {
             }
         }
 
+        // memory space (less used is better for memories with limited size)
+        for mem in problem.hardware.memories() {
+            if problem.hardware.mem_info[mem.0].size_bits.is_some() {
+                key.push(next_index(), self.mem_space_used(problem, mem) as f64);
+            }
+        }
+
         (key, next_index())
     }
 }
@@ -672,6 +713,17 @@ impl Trigger<'_> {
         self.result(
             !self.state.value_available_in_mem_now(value, mem),
             false,
+        )
+    }
+
+    #[must_use]
+    pub fn check_mem_value_unlocked(&mut self, mem: Memory, value: Node) -> bool {
+        self.result(
+            matches!(
+                self.state.state_memory_node[mem.0].get(&value),
+                Some(ValueState::AvailableNow { read_lock_count: 0,read_count: _ })
+            ),
+            self.state.trigger_value_mem_unlocked[value.0][mem.0],
         )
     }
 

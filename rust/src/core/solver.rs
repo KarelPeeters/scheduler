@@ -3,8 +3,8 @@ use itertools::zip_eq;
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
 use crate::core::new_frontier::NewFrontier;
-use crate::core::problem::{Allocation, Channel, Node, Problem};
-use crate::core::state::{Cost, State};
+use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
+use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
@@ -86,12 +86,19 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     }
     ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, ctx.frontier_partial_linear, &state);
 
-    // start core operations
+    // maybe drop non-dead values in limited-size memories
+    for mem in problem.hardware.memories() {
+        if problem.hardware.mem_info[mem.0].size_bits.is_some() {
+            recurse_try_drop(ctx, &state, mem);
+        }
+    }
+
+    // maybe start core operations
     for alloc in problem.allocations() {
         recurse_try_alloc(ctx, &mut state, alloc);
     }
 
-    // start channel operations
+    // maybe start channel operations
     for channel in problem.hardware.channels() {
         recurse_try_channel(ctx, &mut state, channel);
     }
@@ -104,6 +111,45 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
             return;
         }
         recurse(ctx, state_next);
+    }
+}
+
+// TODO instead of early dropping, only drop if we actually need more space?
+fn recurse_try_drop<R: Reporter>(ctx: &mut Context<R>, state: &State, mem: Memory) {
+    // TODO switch to indexmap for deterministic iteration order?
+    for value in ctx.problem.graph.nodes() {
+        // println!("maybe dropping {:?} in {:?}", value, mem);
+
+        // TODO can't drop last available instance of non-dead value
+        //   careful, (how) does this interact with triggers?
+
+        match state.state_memory_node[mem.0].get(&value) {
+            // can't drop value that's not even available
+            None | Some(ValueState::AvailableAtTime(_)) => {
+                continue;
+            }
+            Some(&ValueState::AvailableNow { read_lock_count, read_count }) => {
+                // can't drop value that's locked, and
+                //   no reason to drop unused value: it should not have put it there in the first place
+                if read_lock_count > 0 || read_count == 0 {
+                    continue;
+                }
+                assert!(state.value_remaining_unstarted_uses[value.0] > 0, "dead values should have been dropped already");
+
+                // trigger check
+                let mut trigger = state.new_trigger();
+                if !trigger.check_mem_value_unlocked(mem, value) || !trigger.was_triggered() {
+                    continue
+                }
+
+                // try dropping the value
+                let mut next_state = state.clone();
+                next_state.drop_value(ctx.problem, mem, value);
+                recurse(ctx, next_state);
+
+                // no need to mark as tried, the trigger stuff already handles that
+            }
+        }
     }
 }
 
@@ -195,6 +241,8 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
     if !trigger.check_mem_value_available(channel_info.mem_source, value) {
         return;
     }
+    // TODO what is this supposed to check? something like "is the given value no longer available in the target memory"?
+    // TODO think about the right way to handle dropping+copying operations
     if !trigger.check_mem_value_not_available(channel_info.mem_dest, value) {
         return;
     }
