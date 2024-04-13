@@ -20,6 +20,7 @@ pub struct Problem {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Allocation(pub usize);
 
+// TODO rename this to something better, maybe mapping?
 #[derive(Debug)]
 pub struct AllocationInfo {
     pub id: String,

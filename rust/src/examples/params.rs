@@ -117,6 +117,11 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     let mut allocations = vec![];
     for (i, &core_group) in enumerate(&core_groups) {
         for node in graph.nodes() {
+            // inputs don't get allocations, they already exist
+            if graph.inputs.contains(&node) {
+                continue;
+            }
+            
             for &(ref name, time, energy) in allocs_time_energy {
                 allocations.push(AllocationInfo {
                     id: name.to_string(),
