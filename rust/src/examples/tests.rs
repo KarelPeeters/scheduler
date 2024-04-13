@@ -264,6 +264,31 @@ fn split_tradeoff_shallow() {
     ]);
 }
 
+#[test]
+fn single_memory_drop() {
+    let problem = test_problem(
+        TestGraphParams {
+            depth: 2,
+            branches: 2,
+            cross: false,
+            node_size: 1000,
+            weight_size: Some(1000),
+        },
+        TestHardwareParams {
+            core_count: 1,
+            share_group: false,
+            mem_size_ext: None,
+            mem_size_int: Some(3000),
+            time_per_bit_ext: 1.0,
+            time_per_bit_int: 0.5,
+            energy_per_bit_ext: 2.0,
+            energy_per_bit_int: 1.0,
+        },
+        &[("basic", 4000.0, 1000.0)],
+    );
+    expect_solution(&problem, vec![Cost { time: 29_000.0, energy: 23_000.0 }]);
+}
+
 #[track_caller]
 pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
     let frontier = solve(problem, &mut DummyReporter);
