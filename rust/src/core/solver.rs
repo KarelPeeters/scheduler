@@ -1,4 +1,4 @@
-use itertools::{Itertools, zip_eq};
+use itertools::zip_eq;
 
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
@@ -163,10 +163,11 @@ fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, cha
         return;
     }
 
-    // TODO avoid copy
-    let values = state.state_memory_node[channel_info.mem_source.0].keys().copied().collect_vec();
-    for value in values {
-        recurse_try_channel_transfer(ctx, state, channel, value);
+    // TODO switch to indexmap for deterministic iteration order?
+    for value in problem.graph.nodes() {
+        if state.state_memory_node[channel_info.mem_source.0].contains_key(&value) {
+            recurse_try_channel_transfer(ctx, state, channel, value);
+        }
     }
 }
 
