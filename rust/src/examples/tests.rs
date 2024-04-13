@@ -66,7 +66,85 @@ fn single_zero_sized_node() {
         },
         &[("basic", 4000.0, 1000.0)],
     );
-    expect_solution(&problem, vec![Cost { time: 6000.0, energy: 1000.0 }]);
+    expect_solution(&problem, vec![Cost { time: 4000.0, energy: 1000.0 }]);
+}
+
+#[test]
+fn linear_use_single() {
+    let problem = test_problem(
+        TestGraphParams {
+            depth: 4,
+            branches: 1,
+            cross: false,
+            node_size: 1000,
+            weight_size: None,
+        },
+        TestHardwareParams {
+            core_count: 2,
+            share_group: false,
+            mem_size_ext: None,
+            mem_size_int: None,
+            time_per_bit_ext: 1.0,
+            time_per_bit_int: 0.5,
+            energy_per_bit_ext: 2.0,
+            energy_per_bit_int: 1.0,
+        },
+        &[("basic", 4000.0, 1000.0)],
+    );
+    expect_solution(&problem, vec![Cost { time: 22_000.0, energy: 9000.0 }]);
+}
+
+#[test]
+fn split_use_both() {
+    let problem = test_problem(
+        TestGraphParams {
+            depth: 4,
+            branches: 2,
+            cross: false,
+            node_size: 1000,
+            weight_size: None,
+        },
+        TestHardwareParams {
+            core_count: 2,
+            share_group: false,
+            mem_size_ext: None,
+            mem_size_int: None,
+            time_per_bit_ext: 1.0,
+            time_per_bit_int: 0.5,
+            energy_per_bit_ext: 2.0,
+            energy_per_bit_int: 1.0,
+        },
+        &[("basic", 4000.0, 1000.0)],
+    );
+    expect_solution(&problem, vec![
+        Cost { time: 23_000.0, energy: 15000.0 },
+        Cost { time: 38_000.0, energy: 13_000.0 },
+    ]);
+}
+
+#[test]
+fn split_use_single() {
+    let problem = test_problem(
+        TestGraphParams {
+            depth: 4,
+            branches: 2,
+            cross: false,
+            node_size: 1000,
+            weight_size: None,
+        },
+        TestHardwareParams {
+            core_count: 2,
+            share_group: false,
+            mem_size_ext: None,
+            mem_size_int: None,
+            time_per_bit_ext: 1.0,
+            time_per_bit_int: 20.0,
+            energy_per_bit_ext: 2.0,
+            energy_per_bit_int: 1.0,
+        },
+        &[("basic", 4000.0, 1000.0)],
+    );
+    expect_solution(&problem, vec![Cost { time: 38_000.0, energy: 13_000.0 }]);
 }
 
 #[track_caller]

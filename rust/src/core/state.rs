@@ -210,7 +210,7 @@ impl State {
         }
     }
 
-    pub fn is_done(&self, problem: &Problem) -> bool {
+    pub fn has_achieved_output_placements(&self, problem: &Problem) -> bool {
         for (output_i, &mem) in enumerate(&problem.output_placements) {
             let output = problem.graph.outputs[output_i];
             if !self.value_available_in_mem_now(output, mem) {
@@ -218,6 +218,10 @@ impl State {
             }
         }
         true
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.state_group.iter().all(|s| s.is_none())
     }
 
     pub fn current_cost(&self) -> Cost {

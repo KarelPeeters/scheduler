@@ -70,6 +70,8 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     }
 
     // graph
+    assert!(graph_params.branches > 0 || graph_params.depth == 0);
+    
     let mut graph = Graph::new("graph");
     let node_input = graph.add_node(NodeInfo {
         id: "node-input".to_string(),
@@ -79,7 +81,7 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     graph.add_input(node_input);
     let mut prev = vec![node_input];
     for i_depth in 0..graph_params.depth {
-        let next = (0..graph_params.depth).map(|i_branch| {
+        let next = (0..graph_params.branches).map(|i_branch| {
             let mut inputs = if graph_params.cross || i_depth == 0 {
                 prev.clone()
             } else {

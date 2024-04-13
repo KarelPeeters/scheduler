@@ -57,7 +57,9 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     state.assert_valid(problem);
 
     // bookkeeping
-    if state.is_done(problem) {
+    // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
+    //   similar to the idea to improve the pruning in the other place?
+    if state.is_idle() && state.has_achieved_output_placements(problem) {
         assert_eq!(state.curr_time, state.minimum_time);
 
         let cost = state.current_cost();
