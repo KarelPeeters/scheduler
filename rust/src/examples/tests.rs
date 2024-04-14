@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
-use crate::core::problem::{Graph, Hardware, Problem};
+use crate::core::problem::{ChannelCost, Graph, Hardware, Problem};
 use crate::core::solver::{DummyReporter, solve};
 use crate::core::state::Cost;
 use crate::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -19,6 +19,9 @@ fn empty() {
     expect_solution(&problem, vec![Cost { time: 0.0, energy: 0.0 }]);
 }
 
+pub const DEFAULT_CHANNEL_COST_EXT: ChannelCost = ChannelCost { latency: 0.0, time_per_bit: 1.0, energy_per_bit: 2.0 };
+pub const DEFAULT_CHANNEL_COST_INT: ChannelCost = ChannelCost { latency: 0.0, time_per_bit: 0.5, energy_per_bit: 1.0 };
+
 #[test]
 fn single_normal() {
     let problem = test_problem(
@@ -34,10 +37,8 @@ fn single_normal() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -59,10 +60,8 @@ fn single_zero_sized_node() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -84,10 +83,8 @@ fn linear_use_single() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -109,10 +106,8 @@ fn split_use_both() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -137,10 +132,12 @@ fn split_use_single() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 20.0,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: ChannelCost {
+                latency: 0.0,
+                time_per_bit: 20.0,
+                energy_per_bit: 1.0,
+            },
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -162,10 +159,8 @@ fn single_tradeoff() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("slow", 4000.0 * 2.0, 1000.0 * 0.75), ("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
     );
@@ -199,10 +194,8 @@ fn split_tradeoff_deep() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
     );
@@ -239,10 +232,8 @@ fn split_tradeoff_shallow() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("slow", 4000.0 * 1.5, 1000.0 / 2.0), ("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
     );
@@ -279,10 +270,8 @@ fn single_memory_drop() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: Some(3000),
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -304,10 +293,8 @@ fn tricky_drop_case() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: Some(3000),
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );

@@ -1,5 +1,5 @@
 use itertools::{enumerate, Itertools};
-use crate::core::problem::{AllocationInfo, ChannelInfo, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
+use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
 
 #[derive(Debug, Clone)]
 pub struct TestGraphParams {
@@ -16,14 +16,10 @@ pub struct TestHardwareParams {
     pub core_count: usize,
     // TODO option to share both channels with the core?
     pub share_group: bool,
-
     pub mem_size_ext: Option<u64>,
     pub mem_size_int: Option<u64>,
-
-    pub time_per_bit_ext: f64,
-    pub time_per_bit_int: f64,
-    pub energy_per_bit_ext: f64,
-    pub energy_per_bit_int: f64,
+    pub channel_cost_ext: ChannelCost,
+    pub channel_cost_int: ChannelCost,
 }
 
 pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardwareParams, allocs_time_energy: &[(&str, f64, f64)]) -> Problem {
@@ -45,28 +41,18 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         mem_core.push(mem_curr);
 
         // channel
-        let (channel_id, mem_prev, time_per_bit, energy_per_bit) = if i_core == 0 {
-            ("channel_ext_0".to_string(), mem_ext, hardware_params.time_per_bit_ext, hardware_params.energy_per_bit_ext)
+        let (channel_id, mem_prev, channel_cost) = if i_core == 0 {
+            ("channel_ext_0".to_string(), mem_ext, hardware_params.channel_cost_ext)
         } else {
-            (format!("channel_chip_{}", i_core), mem_core[i_core - 1], hardware_params.time_per_bit_int, hardware_params.energy_per_bit_int)
+            (format!("channel_chip_{}", i_core), mem_core[i_core - 1], hardware_params.channel_cost_int)
         };
         let channel_group = if hardware_params.share_group {
             core_group
         } else {
             hardware.add_group(GroupInfo { id: channel_id.clone() })
         };
-        for (dir, mem_source, mem_dest) in [("fwd", mem_prev, mem_curr), ("bck", mem_curr, mem_prev)] {
-            let channel_info = ChannelInfo {
-                id: format!("{channel_id}_{dir}"),
-                group: channel_group,
-                mem_source,
-                mem_dest,
-                latency: 0.0,
-                time_per_bit,
-                energy_per_bit,
-            };
-            hardware.add_channel(channel_info);
-        }
+        hardware.create_channel(format!("{channel_id}_fwd"), channel_group, mem_prev, mem_curr, channel_cost);
+        hardware.create_channel(format!("{channel_id}_bck"), channel_group, mem_curr, mem_prev, channel_cost);
     }
 
     // graph

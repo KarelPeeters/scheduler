@@ -20,6 +20,14 @@
     * Prevents looping forever on illegal situations.
     * Immediately gets a bound so we can start pruning.
 
+* Switch to proper graph representation
+  * Multiple outputs for a node
+  * Maybe even remove the graph thing entirely, and switch to only using mappings?
+  * Slice, transpose, concat, ...
+    * Slice probably just implicit,
+    * For transpose just assume that copy engines are good enough that we can ignore it?
+    * Concat just adds memory allocation constraints.
+
 # High level optimizations
 
 * Check for _graph automorphisms_ during dominance check.
@@ -49,6 +57,8 @@
 * Don't take actions that could have been taken earlier.
 * Gradually expand the solution space to try to get full schedules as quickly as possible, enabling more cuts.
   * This can take many forms, eg. limit the allocations that can be used, the cores, ...
+* Cut for channels that connect the same segments and are dominated:
+  * Worse channel can only be used if during its runtime the better one was also used at some point.
 
 # Input preprocessing
 * Drop dominated allocations (and maybe channels if that's possible)?

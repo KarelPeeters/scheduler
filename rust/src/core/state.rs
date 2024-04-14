@@ -498,8 +498,8 @@ impl State {
 
         // metadata
         let size_bits = problem.graph.node_info[value.0].size_bits;
-        let time_delta = channel_info.time_to_transfer(size_bits);
-        let energy_delta = channel_info.energy_to_transfer(size_bits);
+        let time_delta = channel_info.cost.time_to_transfer(size_bits);
+        let energy_delta = channel_info.cost.energy_to_transfer(size_bits);
 
         let time_end = self.curr_time + time_delta;
         let time_range = TimeRange { start: self.curr_time, end: time_end };

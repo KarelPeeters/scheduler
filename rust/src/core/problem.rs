@@ -81,11 +81,14 @@ pub struct GroupInfo {
 #[derive(Debug)]
 pub struct ChannelInfo {
     pub id: String,
-
     pub group: Group,
     pub mem_source: Memory,
     pub mem_dest: Memory,
+    pub cost: ChannelCost,
+}
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct ChannelCost {
     pub latency: f64,
     pub time_per_bit: f64,
     pub energy_per_bit: f64,
@@ -93,8 +96,8 @@ pub struct ChannelInfo {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ChannelDir {
-    AtoB,
-    BtoA,
+    Single,
+    Both,
 }
 
 #[derive(Debug)]
@@ -164,6 +167,15 @@ impl Graph {
         let node = Node(self.node_info.len());
         self.node_info.push(info);
         node
+    }
+
+    pub fn create_node(&mut self, id: impl Into<String>, size_bits: u64, inputs: Vec<Node>) -> Node {
+        let info = NodeInfo {
+            id: id.into(),
+            size_bits,
+            inputs,
+        };
+        self.add_node(info)
     }
 
     pub fn add_input(&mut self, node: Node) {
@@ -255,18 +267,51 @@ impl Hardware {
         memory
     }
 
+    pub fn create_memory(&mut self, id: impl Into<String>, size_bits: Option<u64>) -> Memory {
+        self.add_memory(MemoryInfo { id: id.into(), size_bits })
+    }
+
     pub fn add_group(&mut self, info: GroupInfo) -> Group {
         let group = Group(self.group_info.len());
         self.group_info.push(info);
         group
     }
 
+    pub fn create_group(&mut self, id: impl Into<String>) -> Group {
+        self.add_group(GroupInfo { id: id.into() })
+    }
+    
     // TODO bidirectional channel utility
     pub fn add_channel(&mut self, info: ChannelInfo) -> Channel {
         let channel = Channel(self.channel_info.len());
         self.channel_info.push(info);
         self.assert_channel_valid(channel);
         channel
+    }
+
+    pub fn create_channel(&mut self, id: impl Into<String>, group: Group, mem_source: Memory, mem_dest: Memory, cost: ChannelCost) {
+        let info = ChannelInfo {
+            id: id.into(),
+            group,
+            mem_source,
+            mem_dest,
+            cost,
+        };
+        self.add_channel(info);
+    }
+
+    pub fn create_channel_bidir(&mut self, id: impl Into<String>, group: Group, mem_left: Memory, mem_right: Memory, cost: ChannelCost) {
+        let id = id.into();
+        for (dir, mem_source, mem_dest) in [("fwd", mem_left, mem_right), ("bck", mem_right, mem_left)].iter().copied() {
+            let info = ChannelInfo {
+                id: format!("{}_{}", id, dir),
+                group,
+                mem_source,
+                mem_dest,
+                cost,
+            };
+            self.add_channel(info);
+        }
     }
 
     // TODO render groups as a box around channels + a core if there are allocs in it?
@@ -297,9 +342,9 @@ impl Hardware {
                 ("debug", format!("{:?}", channel)),
                 ("id", info.id.clone()),
                 ("group", self.group_info[info.group.0].id.clone()),
-                ("latency", info.latency.to_string()),
-                ("time_per_bit", info.time_per_bit.to_string()),
-                ("energy_per_bit", info.energy_per_bit.to_string()),
+                ("latency", info.cost.latency.to_string()),
+                ("time_per_bit", info.cost.time_per_bit.to_string()),
+                ("energy_per_bit", info.cost.energy_per_bit.to_string()),
             ];
             let mid = format!("channel_{}", channel.0);
 
@@ -348,7 +393,7 @@ impl Hardware {
         let channel = &self.channel_info[channel.0];
         assert!(channel.mem_source.0 < self.memories().len());
         assert!(channel.mem_dest.0 < self.memories().len());
-        assert!(channel.latency >= 0.0 && channel.time_per_bit >= 0.0 && channel.energy_per_bit >= 0.0);
+        channel.cost.assert_valid();
     }
 
     pub fn assert_valid(&self) {
@@ -358,7 +403,11 @@ impl Hardware {
     }
 }
 
-impl ChannelInfo {
+impl ChannelCost {
+    pub fn assert_valid(&self) {
+        assert!(self.latency >= 0.0 && self.time_per_bit >= 0.0 && self.energy_per_bit >= 0.0);
+    }
+    
     pub fn energy_to_transfer(&self, size_bits: u64) -> f64 {
         self.energy_per_bit * size_bits as f64
     }

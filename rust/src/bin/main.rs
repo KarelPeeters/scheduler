@@ -9,7 +9,7 @@ use ordered_float::OrderedFloat;
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
 use rust::core::new_frontier::NewFrontier;
-use rust::core::problem::Problem;
+use rust::core::problem::{ChannelCost, Problem};
 use rust::core::solver::{Reporter, solve};
 use rust::core::state::{Cost, State};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -29,10 +29,16 @@ fn main() {
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            time_per_bit_ext: 1.0,
-            time_per_bit_int: 0.5,
-            energy_per_bit_ext: 2.0,
-            energy_per_bit_int: 1.0,
+            channel_cost_ext: ChannelCost {
+                latency: 0.0,
+                time_per_bit: 1.0,
+                energy_per_bit: 2.0,
+            },
+            channel_cost_int: ChannelCost {
+                latency: 0.0,
+                time_per_bit: 0.5,
+                energy_per_bit: 1.0,
+            },
         },
         &[("basic", 4000.0, 1000.0)],
     );
@@ -56,7 +62,7 @@ fn main_milp(problem: &Problem) {
         let node_info = &problem.graph.node_info[node.0];
 
         for channel in &problem.hardware.channel_info {
-            let channel_value_delta = channel.time_to_transfer(node_info.size_bits);
+            let channel_value_delta = channel.cost.time_to_transfer(node_info.size_bits);
             deltas.insert(OrderedFloat(channel_value_delta));
 
             // TODO we may need to copy some values across a channel multiple times, so this is not a perfect bound
