@@ -1,10 +1,11 @@
-use crate::core::problem::{Allocation, Channel, Node};
+use crate::core::problem::{Allocation, Channel, Memory, Node};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
     Wait(ActionWait),
     Core(ActionCore),
     Channel(ActionChannel),
+    Drop(ActionDrop)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,6 +24,13 @@ pub struct ActionChannel {
     pub time: TimeRange,
     pub channel: Channel,
     pub value: Node,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ActionDrop {
+    pub time: f64,
+    pub value: Node,
+    pub mem: Memory,
 }
 
 #[derive(Debug, Clone, Copy)]

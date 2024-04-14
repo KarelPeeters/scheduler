@@ -6,7 +6,7 @@ use itertools::{chain, enumerate, zip_eq};
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
 use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
-use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionWait, TimeRange};
+use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
 use crate::dom_early_check;
 use crate::util::mini::{IterFloatExt, max_f64};
 
@@ -340,6 +340,13 @@ impl State {
             // mark first memory decrease
             *slot = Some((mem_space_used_before, mem_space_used_before - value_size_bits));
         }
+
+        // record action
+        self.actions_taken.push(Action::Drop(ActionDrop {
+            time: self.curr_time,
+            value,
+            mem,
+        }));
     }
 
     fn claim_group(&mut self, group: Group, claim: GroupClaim) {
@@ -406,27 +413,28 @@ impl State {
             let mem_content = &mut self.state_memory_node[mem.0];
             let mut exit = false;
 
-            mem_content.retain(|value, &mut availability| {
+            mem_content.retain(|&value, &mut availability| {
                 if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
                     let dead = self.value_remaining_unstarted_uses[value.0] == 0;
 
-                    // println!("dead drop check {:?} in {:?}", value, mem);
-
                     if read_lock_count > 0 || !dead {
-                        // println!("  reject, not really dead: locks={read_lock_count}, dead={dead}");
                         // not (really) dead, keep
                         return true;
                     }
 
                     if read_count == 0 {
-                        // println!("  reject and prune, never used");
                         // dead but never read, prune this state
                         exit = true;
                         return true;
                     }
 
                     // dead and read at some point, drop
-                    // println!("  accept");
+                    // TODO go back in time and drop at end of last usage? mostly for plotting clarity
+                    self.actions_taken.push(Action::Drop(ActionDrop {
+                        time: self.curr_time,
+                        value,
+                        mem,
+                    }));
                     false
                 } else {
                     true
