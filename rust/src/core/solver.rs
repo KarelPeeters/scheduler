@@ -56,6 +56,14 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     let problem = ctx.problem;
     state.assert_valid(problem);
 
+    // drop dead values
+    //   this needs to be done after every action, not just after waiting: 
+    //   actions might have made duplicate values in other memories dead
+    if state.drop_dead_values(problem).is_err() {
+        // pruned, dead unused value was used
+        return;
+    }
+
     // bookkeeping
     // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
     //   similar to the idea to improve the pruning in the other place?
@@ -107,14 +115,13 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
     if let Some(first_done_time) = state.first_done_time() {
         let mut state_next = state.clone();
-        if state_next.do_action_wait(problem, first_done_time).is_err() {
-            return;
-        }
+        state_next.do_action_wait(problem, first_done_time);
         recurse(ctx, state_next);
     }
 }
 
 // TODO instead of early dropping, only drop if we actually need more space?
+#[inline(never)]
 fn recurse_try_drop<R: Reporter>(ctx: &mut Context<R>, state: &State, mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?
     for value in ctx.problem.graph.nodes() {
@@ -243,7 +250,7 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
     }
     // TODO what is this supposed to check? something like "is the given value no longer available in the target memory"?
     // TODO think about the right way to handle dropping+copying operations
-    if !trigger.check_mem_value_not_available(channel_info.mem_dest, value) {
+    if !trigger.check_mem_value_no_availability(channel_info.mem_dest, value) {
         return;
     }
     if !trigger.check_mem_space_available(problem, channel_info.mem_dest, value_info.size_bits) {

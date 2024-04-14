@@ -310,7 +310,7 @@ impl State {
                 *trigger = true;
             }
             ValueState::AvailableAtTime(_) => {
-                assert_eq!(prev, None);
+                assert_eq!(prev, None, "Value {value:?} in mem {mem:?} already has availability, trying to insert {availability:?}");
             }
         }
     }
@@ -358,7 +358,7 @@ impl State {
         *trigger = true;
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) -> Result<(), ()> {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -396,8 +396,9 @@ impl State {
                 self.release_group(group);
             }
         }
+    }
 
-        // drop dead values from memories
+    pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
         for mem_i in 0..self.state_memory_node.len() {
             let mem = Memory(mem_i);
             let used_before = self.mem_space_used(problem, mem);
@@ -409,15 +410,24 @@ impl State {
                 if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
                     let dead = self.value_remaining_unstarted_uses[value.0] == 0;
 
-                    if dead && read_count == 0 {
-                        // TODO don't do this, just delete the operation but keep going?
-                        // prune this branch if we're dropping values that haven't been used,
-                        //   we should have avoided copying them in the first place!
+                    // println!("dead drop check {:?} in {:?}", value, mem);
+
+                    if read_lock_count > 0 || !dead {
+                        // println!("  reject, not really dead: locks={read_lock_count}, dead={dead}");
+                        // not (really) dead, keep
+                        return true;
+                    }
+
+                    if read_count == 0 {
+                        // println!("  reject and prune, never used");
+                        // dead but never read, prune this state
                         exit = true;
                         return true;
                     }
 
-                    read_lock_count > 0 || !dead
+                    // dead and read at some point, drop
+                    // println!("  accept");
+                    false
                 } else {
                     true
                 }
@@ -429,10 +439,20 @@ impl State {
 
             let used_after = self.mem_space_used(problem, mem);
             if used_before != used_after {
+                assert!(used_after < used_before);
+
                 let slot = &mut self.trigger_mem_usage_decreased[mem.0];
                 let new = (used_before, used_after);
-                assert!(slot.is_none() || *slot == Some(new));
-                *slot = Some(new);
+
+                match slot {
+                    None => {
+                        *slot = Some(new);
+                    }
+                    Some((_slot_before, slot_after)) => {
+                        assert_eq!(*slot_after, used_before);
+                        *slot_after = used_after;
+                    }
+                }
             }
         }
 
@@ -473,6 +493,8 @@ impl State {
 
     pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node) -> TimeRange {
         let channel_info = &problem.hardware.channel_info[channel.0];
+
+        assert!(self.value_mem_availability(value, channel_info.mem_dest).is_none());
 
         // metadata
         let size_bits = problem.graph.node_info[value.0].size_bits;
@@ -708,10 +730,10 @@ impl Trigger<'_> {
     }
 
     #[must_use]
-    pub fn check_mem_value_not_available(&mut self, mem: Memory, value: Node) -> bool {
-        // TODO use drop trigger here
+    pub fn check_mem_value_no_availability(&mut self, mem: Memory, value: Node) -> bool {
+        // TODO use drop trigger here? generally think about how this should interact with triggering
         self.result(
-            !self.state.value_available_in_mem_now(value, mem),
+            self.state.value_mem_availability(value, mem).is_none(),
             false,
         )
     }
@@ -720,7 +742,7 @@ impl Trigger<'_> {
     pub fn check_mem_value_unlocked(&mut self, mem: Memory, value: Node) -> bool {
         self.result(
             matches!(
-                self.state.state_memory_node[mem.0].get(&value),
+                self.state.value_mem_availability(value, mem),
                 Some(ValueState::AvailableNow { read_lock_count: 0,read_count: _ })
             ),
             self.state.trigger_value_mem_unlocked[value.0][mem.0],

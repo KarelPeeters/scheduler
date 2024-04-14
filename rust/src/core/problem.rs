@@ -185,6 +185,7 @@ impl Graph {
 
         for (i, node) in self.nodes().enumerate() {
             let mut rows = vec![
+                ("debug", format!("{:?}", node)),
                 ("id", self.node_info[node.0].id.clone()),
                 ("size_bits", self.node_info[node.0].size_bits.to_string()),
             ];
@@ -282,6 +283,7 @@ impl Hardware {
                 "inf".to_owned()
             };
             let rows = vec![
+                ("debug", format!("{:?}", mem)),
                 ("id", self.mem_info[mem.0].id.clone()),
                 ("size_bits", size),
             ];
@@ -292,6 +294,7 @@ impl Hardware {
         for channel in self.channels() {
             let info = &self.channel_info[channel.0];
             let rows = vec![
+                ("debug", format!("{:?}", channel)),
                 ("id", info.id.clone()),
                 ("group", self.group_info[info.group.0].id.clone()),
                 ("latency", info.latency.to_string()),
