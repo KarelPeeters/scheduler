@@ -182,7 +182,7 @@ impl State {
             }
         }
         for mem in hardware.memories() {
-            add_size_delta(mem, self.curr_time, 0);
+            add_size_delta(mem, self.minimum_time, 0);
         }
 
         // draw memory plots
@@ -192,7 +192,10 @@ impl State {
 
             let history = &mem_time_bits_used[mem.0];
             let max_bits = history.iter().map(|&(_, b)| b).max().unwrap_or(1);
-            let plot_limit = mem_info.size_bits.unwrap_or(max_bits);
+            let mut plot_limit = mem_info.size_bits.unwrap_or(max_bits);
+            if plot_limit == 0 {
+                plot_limit = 1;
+            }
 
             writeln!(
                 f,
