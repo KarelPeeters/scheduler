@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 
 use itertools::{chain, enumerate, zip_eq};
@@ -332,10 +333,9 @@ impl State {
 
         // update memory usage trigger
         let slot = &mut self.trigger_mem_usage_decreased[mem.0];
-        if let Some((_, after)) = slot {
+        if let Some((_, slot_after)) = slot {
             // further decrease memory used
-            assert!(*after >= value_size_bits);
-            *after -= value_size_bits;
+            *slot_after = min(*slot_after, mem_space_used_before - value_size_bits);
         } else {
             // mark first memory decrease
             *slot = Some((mem_space_used_before, mem_space_used_before - value_size_bits));
@@ -449,8 +449,7 @@ impl State {
                         *slot = Some(new);
                     }
                     Some((_slot_before, slot_after)) => {
-                        assert_eq!(*slot_after, used_before);
-                        *slot_after = used_after;
+                        *slot_after = min(*slot_after, used_after);
                     }
                 }
             }
