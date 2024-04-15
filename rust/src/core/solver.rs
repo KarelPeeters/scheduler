@@ -39,7 +39,8 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
     queue.push(OrdState::new(problem, root_state));
 
     // main loop
-    while let Some(OrdState { cost: _, mut state }) = queue.pop() {
+    while let Some(state) = queue.pop() {
+        let mut state = state.state;
         if cfg!(debug_assertions) {
             state.assert_valid(problem);
         }
@@ -278,14 +279,15 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
 }
 
 pub struct OrdState {
+    unstarted: usize,
     cost: Cost,
     state: State,
 }
 
 impl OrdState {
-    pub fn new(_: &Problem, state: State) -> Self {
-        // TODO why is using best_case_cost so much worse here?
-        Self { cost: state.current_cost(), state }
+    pub fn new(problem: &Problem, state: State) -> Self {
+        let unstarted = state.unstarted_nodes.len();
+        Self { unstarted, cost: state.best_case_cost(problem), state }
     }
 }
 
@@ -305,10 +307,15 @@ impl PartialOrd for OrdState {
 
 impl Ord for OrdState {
     fn cmp(&self, other: &Self) -> Ordering {
+        // TODO: this heuristic does not have to be conservative,
+        //   we have make some risky but hopefully better predictions!
+        
         let Cost { time: self_time, energy: self_energy } = self.cost;
         let Cost { time: other_time, energy: other_energy } = other.cost;
         // TODO which order to pick here? make user-configurable?
-        (self_time, self_energy).partial_cmp(&(other_time, other_energy)).unwrap()
+        // (self.unstarted, self_time, self_energy).partial_cmp(&(other.unstarted, other_time, other_energy)).unwrap().reverse()
         // (self_energy, self_time).partial_cmp(&(other_energy, other_time)).unwrap()
+
+        (self_time, self_energy).partial_cmp(&(other_time, other_energy)).unwrap().reverse()
     }
 }
