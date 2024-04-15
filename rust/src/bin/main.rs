@@ -8,36 +8,29 @@ use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
-use rust::core::problem::{ChannelCost, Problem};
+use rust::core::problem::Problem;
 use rust::core::solver::{OrdState, Reporter, solve};
 use rust::core::state::{Cost, State};
+use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
 use rust::util::mini::IterFloatExt;
 
 fn main() {
     let problem = test_problem(
         TestGraphParams {
-            depth: 0,
-            branches: 0,
+            depth: 4,
+            branches: 1,
             cross: false,
             node_size: 1000,
             weight_size: None,
         },
         TestHardwareParams {
-            core_count: 1,
+            core_count: 2,
             share_group: false,
             mem_size_ext: None,
             mem_size_int: None,
-            channel_cost_ext: ChannelCost {
-                latency: 0.0,
-                time_per_bit: 1.0,
-                energy_per_bit: 2.0,
-            },
-            channel_cost_int: ChannelCost {
-                latency: 0.0,
-                time_per_bit: 0.5,
-                energy_per_bit: 1.0,
-            },
+            channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
+            channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
         &[("basic", 4000.0, 1000.0)],
     );

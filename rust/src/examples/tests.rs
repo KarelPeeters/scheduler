@@ -4,6 +4,7 @@ use ordered_float::OrderedFloat;
 use crate::core::problem::{ChannelCost, Graph, Hardware, Problem};
 use crate::core::solver::{DummyReporter, solve};
 use crate::core::state::Cost;
+use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
 
 #[test]
@@ -18,9 +19,6 @@ fn empty() {
     };
     expect_solution(&problem, vec![Cost { time: 0.0, energy: 0.0 }]);
 }
-
-pub const DEFAULT_CHANNEL_COST_EXT: ChannelCost = ChannelCost { latency: 0.0, time_per_bit: 1.0, energy_per_bit: 2.0 };
-pub const DEFAULT_CHANNEL_COST_INT: ChannelCost = ChannelCost { latency: 0.0, time_per_bit: 0.5, energy_per_bit: 1.0 };
 
 #[test]
 fn single_normal() {
