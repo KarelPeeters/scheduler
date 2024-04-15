@@ -226,6 +226,10 @@ impl State {
         self.state_group.iter().all(|s| s.is_none())
     }
 
+    pub fn is_done(&self, problem: &Problem) -> bool {
+        self.is_idle() && self.has_achieved_output_placements(problem)
+    }
+
     pub fn current_cost(&self) -> Cost {
         Cost {
             time: self.curr_time,

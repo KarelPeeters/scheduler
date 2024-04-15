@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
 use itertools::zip_eq;
 
 use crate::core::frontier::Frontier;
@@ -19,96 +22,103 @@ impl Reporter for DummyReporter {
     fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &mut NewFrontier, _: &mut LinearFrontier, _: &State) {}
 }
 
-pub struct Context<'p, 'r, 'f, R: Reporter> {
-    problem: &'p Problem,
-    reporter: &'r mut R,
-    frontier_done: &'f mut Frontier<Cost, State>,
-    frontier_partial: &'f mut Frontier<State, ()>,
-    frontier_partial_new: &'f mut NewFrontier,
-    frontier_partial_linear: &'f mut LinearFrontier,
-}
-
 pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, State> {
-    let state = State::new(problem);
-    
+    let root_state = State::new(problem);
+
     let mut frontier_done = Frontier::new();
-    let mut frontier_partial = Frontier::new();
-    let mut frontier_partial_new = NewFrontier::new(state.dom_key_min(problem).1, 1);
-    let mut frontier_partial_linear = LinearFrontier::new(state.dom_key_min(problem).1);
+    let mut frontier_partial = LinearFrontier::new(root_state.dom_key_min(problem).1);
 
-    let mut ctx = Context {
-        problem,
-        reporter,
-        frontier_done: &mut frontier_done,
-        frontier_partial: &mut frontier_partial,
-        frontier_partial_new: &mut frontier_partial_new,
-        frontier_partial_linear: &mut frontier_partial_linear,
-    };
+    // TODO why only by cost and not by the full pareto key?
+    let mut queue = BinaryHeap::new();
 
-    recurse(&mut ctx, state);
+    // add root state
+    if root_state.is_done(problem) {
+        assert!(frontier_done.add(&root_state.current_cost(), &(), || root_state.clone()));
+        reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
+        return frontier_done;
+    }
+    queue.push(OrdState(root_state));
+
+    // main loop
+    while let Some(OrdState(mut state)) = queue.pop() {
+        if cfg!(debug_assertions) {
+            state.assert_valid(problem);
+        }
+
+        // done should have been caught in next already
+        assert!(!state.is_done(problem));
+
+        // compare against existing done states
+        if !frontier_done.would_add(&state.best_case_cost(problem), &()) {
+            continue;
+        }
+
+        // drop dead values
+        //   this needs to be done after every action, not just after waiting:
+        //   actions might have made duplicate values in other memories dead
+        // TODO is this the right place to do this? or should we already do this in next?
+        //    this needs to happen before frontier_partial for sure
+        if state.drop_dead_values(problem).is_err() {
+            // pruned, dead unused value was used
+            continue;
+        }
+
+        // compare against all existing states
+        let added_linear = frontier_partial.add_if_not_dominated(state.dom_key_min(problem).0);
+        if !added_linear {
+            continue;
+        }
+
+        // expand the child states
+        // TODO only do done check on states that have just waited?
+        // TODO change this to a state class, this is just messy and confusing
+        let mut next = |next_state: State| {
+            // immediate report done states
+            // TODO check how much this helps vs only reporting them when visited
+            // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
+            //   similar to the idea to improve the pruning in the other place?
+            if next_state.is_done(problem) {
+                let was_added = frontier_done.add(&next_state.current_cost(), &(), || next_state.clone());
+                if was_added {
+                    reporter.report_new_schedule(problem, &frontier_done, next_state.current_cost(), &next_state);
+                }
+                return;
+            }
+
+            // immediately skip bad states here
+            // (don't do full comparison yet, that can get expensive and maybe we never need to visit this state again)
+            // TODO check how much this helps (and if doing the full would make it much slower)
+            if !frontier_done.would_add(&next_state.best_case_cost(problem), &()) {
+                return;
+            }
+
+            queue.push(OrdState(next_state));
+        };
+
+        expand(problem, state, &mut next);
+    }
 
     frontier_done
 }
 
 // TODO split this up into smaller functions
 #[inline(never)]
-fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
-    let problem = ctx.problem;
-    state.assert_valid(problem);
-
-    // drop dead values
-    //   this needs to be done after every action, not just after waiting: 
-    //   actions might have made duplicate values in other memories dead
-    if state.drop_dead_values(problem).is_err() {
-        // pruned, dead unused value was used
-        return;
-    }
-
-    // bookkeeping
-    // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
-    //   similar to the idea to improve the pruning in the other place?
-    if state.is_idle() && state.has_achieved_output_placements(problem) {
-        assert_eq!(state.curr_time, state.minimum_time);
-
-        let cost = state.current_cost();
-        let was_added = ctx.frontier_done.add(&cost, &(), || state.clone());
-        if was_added {
-            ctx.reporter.report_new_schedule(problem, ctx.frontier_done, cost, &state);
-        }
-
-        return;
-    }
-
-    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &()) {
-        return;
-    }
-    // let added = ctx.frontier_partial.add(&state, problem, || ());
-    // let added_new = ctx.frontier_partial_new.add_if_not_dominated(state.dom_key_min(problem).0);
-    let added_linear = ctx.frontier_partial_linear.add_if_not_dominated(state.dom_key_min(problem).0);
-
-    // assert_eq!(added_new, added_linear);
-    // assert_eq!(ctx.frontier_partial_new.len(), ctx.frontier_partial_linear.len());
-
-    if !added_linear {
-        return;
-    }
-    ctx.reporter.report_new_state(problem, ctx.frontier_partial, ctx.frontier_partial_new, ctx.frontier_partial_linear, &state);
-
+fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
     // maybe drop non-dead values in limited-size memories
     for mem in problem.hardware.memories() {
         if problem.hardware.mem_info[mem.0].size_bits.is_some() {
-            recurse_try_drop(ctx, &state, mem);
+            expand_try_drop(problem, &state, next, mem);
         }
     }
 
     // maybe start core operations
     for alloc in problem.allocations() {
-        recurse_try_alloc(ctx, &mut state, alloc);
+        expand_try_alloc(problem, &mut state, next, alloc);
     }
 
     // maybe start channel operations
     for channel in problem.hardware.channels() {
-        recurse_try_channel(ctx, &mut state, channel);
+        expand_try_channel(problem, &mut state, next, channel);
     }
 
     // wait for first operation to finish
@@ -116,15 +126,15 @@ fn recurse<R: Reporter>(ctx: &mut Context<R>, mut state: State) {
     if let Some(first_done_time) = state.first_done_time() {
         let mut state_next = state.clone();
         state_next.do_action_wait(problem, first_done_time);
-        recurse(ctx, state_next);
+        next(state_next);
     }
 }
 
 // TODO instead of early dropping, only drop if we actually need more space?
 #[inline(never)]
-fn recurse_try_drop<R: Reporter>(ctx: &mut Context<R>, state: &State, mem: Memory) {
+fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?
-    for value in ctx.problem.graph.nodes() {
+    for value in problem.graph.nodes() {
         // println!("maybe dropping {:?} in {:?}", value, mem);
 
         // TODO can't drop last available instance of non-dead value
@@ -151,8 +161,8 @@ fn recurse_try_drop<R: Reporter>(ctx: &mut Context<R>, state: &State, mem: Memor
 
                 // try dropping the value
                 let mut next_state = state.clone();
-                next_state.drop_value(ctx.problem, mem, value);
-                recurse(ctx, next_state);
+                next_state.drop_value(problem, mem, value);
+                next(next_state);
 
                 // no need to mark as tried, the trigger stuff already handles that
             }
@@ -161,9 +171,8 @@ fn recurse_try_drop<R: Reporter>(ctx: &mut Context<R>, state: &State, mem: Memor
 }
 
 #[inline(never)]
-fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc: Allocation) {
+fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), alloc: Allocation) {
     // aliases
-    let problem = ctx.problem;
     let alloc_info = &problem.allocation_info[alloc.0];
     let node = alloc_info.node;
     let node_info = &problem.graph.node_info[node.0];
@@ -198,7 +207,7 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
     // do action
     let mut time_range = None;
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_core(problem, alloc)));
-    recurse(ctx, state_next);
+    next(state_next);
 
     // mark as tried
     let prev = state.tried_allocs.insert(alloc, time_range.unwrap()).is_none();
@@ -206,9 +215,8 @@ fn recurse_try_alloc<R: Reporter>(ctx: &mut Context<R>, state: &mut State, alloc
 }
 
 #[inline(never)]
-fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel) {
+fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel) {
     // aliases
-    let problem = ctx.problem;
     let channel_info = &problem.hardware.channel_info[channel.0];
 
     // check that channel is actually free before going through the following loops
@@ -219,15 +227,14 @@ fn recurse_try_channel<R: Reporter>(ctx: &mut Context<R>, state: &mut State, cha
     // TODO switch to indexmap for deterministic iteration order?
     for value in problem.graph.nodes() {
         if state.state_memory_node[channel_info.mem_source.0].contains_key(&value) {
-            recurse_try_channel_transfer(ctx, state, channel, value);
+            expand_try_channel_transfer(problem, state, next, channel, value);
         }
     }
 }
 
 #[inline(never)]
-fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut State, channel: Channel, value: Node) {
+fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel, value: Node) {
     // aliases
-    let problem = ctx.problem;
     let value_info = &problem.graph.node_info[value.0];
     let channel_info = &problem.hardware.channel_info[channel.0];
 
@@ -263,9 +270,33 @@ fn recurse_try_channel_transfer<R: Reporter>(ctx: &mut Context<R>, state: &mut S
     // do action
     let mut time_range = None;
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_channel(problem, channel, value)));
-    recurse(ctx, state_next);
+    next(state_next);
 
     // mark as tried
     let prev = state.tried_transfers.insert((channel, value), time_range.unwrap());
     assert!(prev.is_none());
+}
+
+struct OrdState(State);
+
+impl PartialEq for OrdState {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.current_cost() == other.0.current_cost()
+    }
+}
+
+impl Eq for OrdState {}
+
+impl PartialOrd for OrdState {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrdState {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let Cost { time: self_time, energy: self_energy } = self.0.current_cost();
+        let Cost { time: other_time, energy: other_energy } = other.0.current_cost();
+        (self_time, self_energy).partial_cmp(&(other_time, other_energy)).unwrap()
+    }
 }

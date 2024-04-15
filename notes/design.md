@@ -59,6 +59,8 @@
   * This can take many forms, eg. limit the allocations that can be used, the cores, ...
 * Cut for channels that connect the same segments and are dominated:
   * Worse channel can only be used if during its runtime the better one was also used at some point.
+* Progressive widening: start with low bounds for time and energy and gradually increase,
+  hoping to find the best solution first.
 
 # Input preprocessing
 * Drop dominated allocations (and maybe channels if that's possible)?
