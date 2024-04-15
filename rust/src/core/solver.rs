@@ -5,13 +5,12 @@ use itertools::zip_eq;
 
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
-use crate::core::new_frontier::NewFrontier;
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::state::{Cost, State, ValueState};
 
 pub trait Reporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, frontier_linear: &mut LinearFrontier, state: &State);
+    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -19,7 +18,7 @@ pub struct DummyReporter;
 
 impl Reporter for DummyReporter {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut Frontier<State, ()>, _: &mut NewFrontier, _: &mut LinearFrontier, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
 }
 
 pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, State> {
@@ -37,10 +36,10 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
         reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
         return frontier_done;
     }
-    queue.push(OrdState(root_state));
+    queue.push(OrdState::new(problem, root_state));
 
     // main loop
-    while let Some(OrdState(mut state)) = queue.pop() {
+    while let Some(OrdState { cost: _, mut state }) = queue.pop() {
         if cfg!(debug_assertions) {
             state.assert_valid(problem);
         }
@@ -68,6 +67,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
         if !added_linear {
             continue;
         }
+        reporter.report_new_state(problem, &frontier_partial, &queue, &state);
 
         // expand the child states
         // TODO only do done check on states that have just waited?
@@ -92,7 +92,7 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
                 return;
             }
 
-            queue.push(OrdState(next_state));
+            queue.push(OrdState::new(problem, next_state));
         };
 
         expand(problem, state, &mut next);
@@ -277,11 +277,21 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
     assert!(prev.is_none());
 }
 
-struct OrdState(State);
+pub struct OrdState {
+    cost: Cost,
+    state: State,
+}
+
+impl OrdState {
+    pub fn new(_: &Problem, state: State) -> Self {
+        // TODO why is using best_case_cost so much worse here?
+        Self { cost: state.current_cost(), state }
+    }
+}
 
 impl PartialEq for OrdState {
     fn eq(&self, other: &Self) -> bool {
-        self.0.current_cost() == other.0.current_cost()
+        self.cost == other.cost
     }
 }
 
@@ -295,8 +305,10 @@ impl PartialOrd for OrdState {
 
 impl Ord for OrdState {
     fn cmp(&self, other: &Self) -> Ordering {
-        let Cost { time: self_time, energy: self_energy } = self.0.current_cost();
-        let Cost { time: other_time, energy: other_energy } = other.0.current_cost();
+        let Cost { time: self_time, energy: self_energy } = self.cost;
+        let Cost { time: other_time, energy: other_energy } = other.cost;
+        // TODO which order to pick here? make user-configurable?
         (self_time, self_energy).partial_cmp(&(other_time, other_energy)).unwrap()
+        // (self_energy, self_time).partial_cmp(&(other_energy, other_time)).unwrap()
     }
 }

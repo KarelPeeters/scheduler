@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashSet, VecDeque};
 use std::time::Instant;
 
 use itertools::{enumerate, Itertools};
@@ -8,9 +8,8 @@ use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
-use rust::core::new_frontier::NewFrontier;
 use rust::core::problem::{ChannelCost, Problem};
-use rust::core::solver::{Reporter, solve};
+use rust::core::solver::{OrdState, Reporter, solve};
 use rust::core::state::{Cost, State};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
 use rust::util::mini::IterFloatExt;
@@ -113,14 +112,16 @@ fn main_solver(problem: &Problem) {
 
     let start = Instant::now();
 
+    println!("Starting solver");
     let frontier = solve(&problem, &mut reporter);
+    let solver_elapsed = start.elapsed();
 
     println!("Frontier:");
     for (c, _) in frontier.iter_arbitrary().sorted_by_key(|(c, _)| (OrderedFloat(c.time), OrderedFloat(c.energy))) {
         println!("  {:?}", c);
     }
 
-    println!("Solver took {:?}s", start.elapsed().as_secs_f64());
+    println!("Solver took {:?}s", solver_elapsed.as_secs_f64());
 }
 
 struct CustomReporter {
@@ -162,41 +163,18 @@ impl Reporter for CustomReporter {
         frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier: &mut Frontier<State, ()>, frontier_new: &mut NewFrontier, frontier_linear: &mut LinearFrontier, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % self.partial_plot_frequency == 0 {
-            // println!("New state, state_counter={}, elapsed={:?}", self.state_counter, self.start.elapsed());
-
-            if frontier.len() > 0 {
-                println!("frontier:");
-                println!("  len={}", frontier.len());
-                println!("  add_count={}", frontier.count_add_try);
-                println!("  add_success={}", frontier.count_add_success as f64 / frontier.count_add_try as f64);
-                println!("  add_removed={}", frontier.count_add_removed as f64 / frontier.count_add_try as f64);
-                frontier.count_add_try = 0;
-                frontier.count_add_success = 0;
-                frontier.count_add_removed = 0;
-            }
-
-            if frontier_new.len() > 0 {
-                println!("frontier_new: len={}", frontier_new.len());
-
-                let depths = format!("{:?}", frontier_new.collect_entry_depths());
-                std::fs::write("ignored/depths_new.txt", &depths).unwrap();
-            }
-
-            if frontier_linear.len() > 0 {
-                println!("frontier_linear: len={}", frontier_linear.len());
-
-                let depths = format!("{:?}", frontier_linear.collect_entry_depths());
-                std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
-            }
-
             let index = self.next_partial_index;
             self.next_partial_index += 1;
 
-            println!("Saving state as partial index {index}");
+            println!("Partial state: index={}: queue_len={}, frontier_len={}", index, queue.len(), frontier.len());
+
+            let depths = format!("{:?}", frontier.collect_entry_depths());
+            std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
+
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
             std::fs::write(format!("ignored/schedules/partial/{index}.txt"), state.summary_string(problem)).unwrap();
         }
