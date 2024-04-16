@@ -22,6 +22,7 @@ pub struct State {
 
     pub state_group: Vec<Option<GroupClaim>>,
     pub state_memory_node: Vec<HashMap<Node, ValueState>>,
+    pub value_live_count: Vec<usize>,
 
     pub unstarted_nodes: HashSet<Node>,
     pub value_remaining_unstarted_uses: Vec<u32>,
@@ -31,9 +32,10 @@ pub struct State {
     pub trigger_group_free: Vec<bool>,
     pub trigger_value_mem_available: Vec<Vec<bool>>,
     // TODO set to false again for dead values? 
-    pub trigger_value_mem_unlocked: Vec<Vec<bool>>,
+    pub trigger_value_mem_unlocked_or_read: Vec<Vec<bool>>,
     // TODO don't track this for inf-sized memories?
     pub trigger_mem_usage_decreased: Vec<Option<(u64, u64)>>,
+    pub trigger_value_live_count_increased: Vec<bool>,
 
     // filtering (attempt -> most recent time range)
     pub tried_allocs: HashMap<Allocation, TimeRange>,
@@ -97,9 +99,12 @@ impl State {
         }
 
         let mut state_memory_node = vec![HashMap::new(); mem_count];
+        let mut value_live_count = vec![0; node_count];
+
         for (&value, &mem) in zip_eq(&graph.inputs, &problem.input_placements) {
             let prev = state_memory_node[mem.0].insert(value, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
             assert!(prev.is_none());
+            value_live_count[value.0] += 1;
         }
 
         // construct
@@ -110,13 +115,15 @@ impl State {
             minimum_time: 0.0,
             state_group: vec![None; group_count],
             state_memory_node,
+            value_live_count,
             unstarted_nodes,
             value_remaining_unstarted_uses,
             trigger_everything: true,
             trigger_group_free: vec![false; group_count],
             trigger_value_mem_available: vec![vec![false; mem_count]; node_count],
-            trigger_value_mem_unlocked: vec![vec![false; mem_count]; node_count],
+            trigger_value_mem_unlocked_or_read: vec![vec![false; mem_count]; node_count],
             trigger_mem_usage_decreased: vec![None; mem_count],
+            trigger_value_live_count_increased: vec![false; node_count],
             tried_allocs: HashMap::new(),
             tried_transfers: HashMap::new(),
         }
@@ -134,6 +141,7 @@ impl State {
 
         // checks
         let mut expected_state_memory_read_lock_count = vec![HashMap::new(); mem_count];
+        let mut expected_value_live_count = vec![0; graph.nodes().len()];
 
         for state in &self.state_group {
             match state {
@@ -158,6 +166,8 @@ impl State {
             let actual = &self.state_memory_node[mem.0];
 
             for (node, &node_actual) in actual {
+                expected_value_live_count[node.0] += 1;
+
                 match node_actual {
                     ValueState::AvailableNow { read_lock_count, read_count: _ } => {
                         assert_eq!(expected.get(node).copied().unwrap_or(0), read_lock_count)
@@ -175,6 +185,8 @@ impl State {
                 }
             }
         }
+
+        assert_eq!(expected_value_live_count, self.value_live_count);
     }
 
     pub fn best_case_cost(&self, problem: &Problem) -> Cost {
@@ -273,8 +285,9 @@ impl State {
         self.trigger_everything = false;
         self.trigger_group_free.fill(false);
         self.trigger_value_mem_available.iter_mut().for_each(|x| x.fill(false));
-        self.trigger_value_mem_unlocked.iter_mut().for_each(|x| x.fill(false));
+        self.trigger_value_mem_unlocked_or_read.iter_mut().for_each(|x| x.fill(false));
         self.trigger_mem_usage_decreased.fill(None);
+        self.trigger_value_live_count_increased.fill(false);
     }
 
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
@@ -284,6 +297,11 @@ impl State {
             ValueState::AvailableNow { read_lock_count, read_count } => {
                 *read_lock_count += 1;
                 *read_count += 1;
+
+                if *read_count == 1 {
+                    // this is not really useful (since it's locked anyway) but just for completeness
+                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
+                }
             }
             ValueState::AvailableAtTime(_) => panic!(),
         }
@@ -296,7 +314,7 @@ impl State {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
                 if *read_lock_count == 0 {
-                    self.trigger_value_mem_unlocked[value.0][mem.0] = true;
+                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
                 }
             }
             ValueState::AvailableAtTime(_) => panic!(),
@@ -307,15 +325,22 @@ impl State {
         let prev = self.state_memory_node[mem.0].insert(value, availability);
 
         match availability {
-            ValueState::AvailableNow { .. } => {
+            ValueState::AvailableNow { read_lock_count, read_count } => {
                 assert!(matches!(prev, Some(ValueState::AvailableAtTime(_))));
 
                 let trigger = &mut self.trigger_value_mem_available[value.0][mem.0];
                 assert!(!*trigger);
                 *trigger = true;
+
+                if read_lock_count == 0 || read_count > 0 {
+                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
+                }
             }
             ValueState::AvailableAtTime(_) => {
                 assert_eq!(prev, None, "Value {value:?} in mem {mem:?} already has availability, trying to insert {availability:?}");
+
+                self.value_live_count[value.0] += 1;
+                self.trigger_value_live_count_increased[value.0];
             }
         }
     }
@@ -334,6 +359,10 @@ impl State {
         let prev = self.state_memory_node[mem.0].remove(&value);
         assert!(matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _ })));
         assert!(prev.is_some());
+
+        let live_count = &mut self.value_live_count[value.0];
+        assert!(*live_count > 0);
+        *live_count -= 1;
 
         // update memory usage trigger
         let slot = &mut self.trigger_mem_usage_decreased[mem.0];
@@ -439,6 +468,11 @@ impl State {
                         value,
                         mem,
                     }));
+
+                    let live_count = &mut self.value_live_count[value.0];
+                    assert!(*live_count > 0);
+                    *live_count -= 1;
+
                     false
                 } else {
                     true
@@ -750,14 +784,24 @@ impl Trigger<'_> {
     }
 
     #[must_use]
-    pub fn check_mem_value_unlocked(&mut self, mem: Memory, value: Node) -> bool {
+    pub fn check_mem_value_unlocked_and_read(&mut self, mem: Memory, value: Node) -> bool {
+        let valid = match self.state.value_mem_availability(value, mem) {
+            None | Some(ValueState::AvailableAtTime(_)) => false,
+            Some(ValueState::AvailableNow { read_lock_count, read_count }) => {
+                read_lock_count == 0 && read_count > 0
+            }
+        };
         self.result(
-            matches!(
-                self.state.value_mem_availability(value, mem),
-                Some(ValueState::AvailableNow { read_lock_count: 0,read_count: _ })
-            ),
-            self.state.trigger_value_mem_unlocked[value.0][mem.0],
+            valid,
+            self.state.trigger_value_mem_unlocked_or_read[value.0][mem.0],
         )
+    }
+
+    #[must_use]
+    pub fn check_not_single_live_instance(&mut self, value: Node) -> bool {
+        let live_count = self.state.value_live_count[value.0];
+        assert!(live_count > 0);
+        self.result(live_count > 1, self.state.trigger_value_live_count_increased[value.0])
     }
 
     #[must_use]

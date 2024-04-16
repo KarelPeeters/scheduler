@@ -305,7 +305,7 @@ impl State {
             }).join(", ");
             writeln!(f, "  value_mem_available: {}", trigger_value_mem_available_str)?;
 
-            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked.iter().enumerate().flat_map(|(v, mems)| {
+            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked_or_read.iter().enumerate().flat_map(|(v, mems)| {
                 mems.iter().copied().positions(identity).map(move |m| (v, m))
             }).map(|(v, m)| {
                 let value_info = &graph.node_info[v];
@@ -321,6 +321,15 @@ impl State {
                 format!("memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
             }).join(", ");
             writeln!(f, "  mem_usage_decreased: {}", trigger_mem_usage_decreased_str)?;
+
+            let trigger_value_live_count_increased_str = s.trigger_value_live_count_increased.iter().enumerate().filter_map(|(v, &increased)| {
+                if increased {
+                    Some(format!("value '{}'", graph.node_info[v].id))
+                } else {
+                    None
+                }
+            }).join(", ");
+            writeln!(f, "  value_live_count_increased: {}", trigger_value_live_count_increased_str)?;
 
             Ok(())
         }

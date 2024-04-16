@@ -74,6 +74,10 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
         // TODO only do done check on states that have just waited?
         // TODO change this to a state class, this is just messy and confusing
         let mut next = |next_state: State| {
+            if cfg!(debug_assertions) {
+                next_state.assert_valid(problem);
+            }
+
             // immediate report done states
             // TODO check how much this helps vs only reporting them when visited
             // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
@@ -105,11 +109,13 @@ pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, 
 // TODO split this up into smaller functions
 #[inline(never)]
 fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
-    // maybe drop non-dead values in limited-size memories
+    // drop non-dead values
     for mem in problem.hardware.memories() {
-        if problem.hardware.mem_info[mem.0].size_bits.is_some() {
-            expand_try_drop(problem, &state, next, mem);
+        // memory has unlimited size, no point in ever dropping things
+        if problem.hardware.mem_info[mem.0].size_bits.is_none() {
+            continue;
         }
+        expand_try_drop(problem, &state, next, mem);
     }
 
     // maybe start core operations
@@ -136,28 +142,31 @@ fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
 fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?
     for value in problem.graph.nodes() {
-        // println!("maybe dropping {:?} in {:?}", value, mem);
-
-        // TODO can't drop last available instance of non-dead value
-        //   careful, (how) does this interact with triggers?
-
         match state.state_memory_node[mem.0].get(&value) {
             // can't drop value that's not even available
             None | Some(ValueState::AvailableAtTime(_)) => {
                 continue;
             }
-            Some(&ValueState::AvailableNow { read_lock_count, read_count }) => {
+            Some(&ValueState::AvailableNow { read_lock_count, read_count: _ }) => {
+                let mut trigger = state.new_trigger();
+
+                if read_lock_count == 0 {
+                    // TODO instead of this assert, prune states with dead values that are still being copied or calculated
+                    assert!(state.value_remaining_unstarted_uses[value.0] > 0, "dead values should have been dropped already");
+                }
+
                 // can't drop value that's locked, and
-                //   no reason to drop unused value: it should not have put it there in the first place
-                if read_lock_count > 0 || read_count == 0 {
+                //   no reason to drop unused value: it should not have been put here in the first place
+                if !trigger.check_mem_value_unlocked_and_read(mem, value) {
                     continue;
                 }
-                assert!(state.value_remaining_unstarted_uses[value.0] > 0, "dead values should have been dropped already");
+                // don't drop last instance of live value
+                if !trigger.check_not_single_live_instance(value) {
+                    continue;
+                }
 
-                // trigger check
-                let mut trigger = state.new_trigger();
-                if !trigger.check_mem_value_unlocked(mem, value) || !trigger.was_triggered() {
-                    continue
+                if !trigger.was_triggered() {
+                    continue;
                 }
 
                 // try dropping the value
