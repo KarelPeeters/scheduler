@@ -9,7 +9,8 @@ use ordered_float::OrderedFloat;
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
 use rust::core::problem::Problem;
-use rust::core::solve_queue::{OrdState, ReporterQueue, solve_queue};
+use rust::core::solve_queue::{OrdState, ReporterQueue};
+use rust::core::solve_recurse::ReporterRecurse;
 use rust::core::state::{Cost, State};
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -19,7 +20,7 @@ fn main() {
     let problem = test_problem(
         TestGraphParams {
             depth: 4,
-            branches: 1,
+            branches: 4,
             cross: false,
             node_size: 1000,
             weight_size: None,
@@ -106,7 +107,8 @@ fn main_solver(problem: &Problem) {
     let start = Instant::now();
 
     println!("Starting solver");
-    let frontier = solve_queue(&problem, &mut reporter);
+    let frontier = rust::core::solve_queue::solve_queue(&problem, &mut reporter);
+    // let frontier = rust::core::solve_recurse::solve_recurse(&problem, &mut reporter);
     let solver_elapsed = start.elapsed();
 
     println!("Frontier:");
@@ -126,7 +128,7 @@ struct CustomReporter {
     partial_plot_frequency: u64,
 }
 
-impl ReporterQueue for CustomReporter {
+impl CustomReporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, _cost: Cost, state: &State) {
         let index = self.next_done_index;
         self.next_done_index += 1;
@@ -156,20 +158,42 @@ impl ReporterQueue for CustomReporter {
         frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % self.partial_plot_frequency == 0 {
             let index = self.next_partial_index;
             self.next_partial_index += 1;
 
-            println!("Partial state: index={}: queue_len={}, frontier_len={}", index, queue.len(), frontier.len());
+            let queue_len = queue.map(|q| q.len());
+            println!("Partial state: index={}: queue_len={:?}, frontier_len={}", index, queue_len, frontier_partial.len());
 
-            let depths = format!("{:?}", frontier.collect_entry_depths());
-            std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
+            // let depths = format!("{:?}", frontier_partial.collect_entry_depths());
+            // std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
 
             state.write_svg_to_file(&problem, format!("ignored/schedules/partial/{index}.svg")).unwrap();
             std::fs::write(format!("ignored/schedules/partial/{index}.txt"), state.summary_string(problem)).unwrap();
         }
+    }
+}
+
+// TODO common utility trait for this
+impl ReporterQueue for CustomReporter {
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
+        self.report_new_schedule(problem, frontier, cost, state)
+    }
+
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
+        self.report_new_state(problem, frontier_partial, Some(queue), state)
+    }
+}
+
+impl ReporterRecurse for CustomReporter {
+    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State) {
+        self.report_new_schedule(problem, frontier_done, cost, schedule)
+    }
+
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, state: &State) {
+        self.report_new_state(problem, frontier_partial, None, state)
     }
 }

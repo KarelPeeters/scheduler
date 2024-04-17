@@ -105,6 +105,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
     frontier_done
 }
 
+#[allow(dead_code)]
 pub struct OrdState {
     unstarted: usize,
     cost: Cost,
