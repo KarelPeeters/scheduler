@@ -7,20 +7,20 @@ use crate::core::linear_frontier::LinearFrontier;
 use crate::core::problem::Problem;
 use crate::core::state::{Cost, State};
 
-pub trait Reporter {
+pub trait ReporterQueue {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State);
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct DummyReporter;
+pub struct DummyReporterQueue;
 
-impl Reporter for DummyReporter {
+impl ReporterQueue for DummyReporterQueue {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
     fn report_new_state(&mut self, _: &Problem, _: &LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
 }
 
-pub fn solve(problem: &Problem, reporter: &mut impl Reporter) -> Frontier<Cost, State> {
+pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Frontier<Cost, State> {
     let root_state = State::new(problem);
 
     let mut frontier_done = Frontier::new();

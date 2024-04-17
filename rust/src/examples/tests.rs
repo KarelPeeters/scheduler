@@ -2,7 +2,8 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
 use crate::core::problem::{ChannelCost, Graph, Hardware, Problem};
-use crate::core::solver::{DummyReporter, solve};
+use crate::core::solve_queue::{DummyReporterQueue, solve_queue};
+use crate::core::solve_recurse::{DummyReporterRecurse, solve_recurse};
 use crate::core::state::Cost;
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -304,12 +305,22 @@ fn tricky_drop_case() {
 
 #[track_caller]
 pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
-    let frontier = solve(problem, &mut DummyReporter);
-    let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
-
     let key = |c: &Cost| (OrderedFloat(c.time), OrderedFloat(c.energy));
-    actual.sort_by_key(key);
     expected.sort_by_key(key);
 
-    assert_eq!(expected, actual);
+    // queue
+    {
+        let frontier = solve_queue(problem, &mut DummyReporterQueue);
+        let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
+        actual.sort_by_key(key);
+        assert_eq!(expected, actual, "solve_queue output mismatch");
+    }
+
+    // recurse
+    {
+        let frontier = solve_recurse(problem, &mut DummyReporterRecurse);
+        let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
+        actual.sort_by_key(key);
+        assert_eq!(expected, actual, "solve_recurse output mismatch");
+    }
 }

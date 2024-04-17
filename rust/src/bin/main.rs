@@ -9,7 +9,7 @@ use ordered_float::OrderedFloat;
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
 use rust::core::problem::Problem;
-use rust::core::solver::{OrdState, Reporter, solve};
+use rust::core::solve_queue::{OrdState, ReporterQueue, solve_queue};
 use rust::core::state::{Cost, State};
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -106,7 +106,7 @@ fn main_solver(problem: &Problem) {
     let start = Instant::now();
 
     println!("Starting solver");
-    let frontier = solve(&problem, &mut reporter);
+    let frontier = solve_queue(&problem, &mut reporter);
     let solver_elapsed = start.elapsed();
 
     println!("Frontier:");
@@ -126,7 +126,7 @@ struct CustomReporter {
     partial_plot_frequency: u64,
 }
 
-impl Reporter for CustomReporter {
+impl ReporterQueue for CustomReporter {
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, _cost: Cost, state: &State) {
         let index = self.next_done_index;
         self.next_done_index += 1;
