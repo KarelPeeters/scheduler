@@ -198,15 +198,29 @@ impl State {
                 .min_f64().unwrap()
         }).sum::<f64>();
 
-        let min_additional_time = self.unstarted_nodes.iter().map(|node| {
+        // // TODO solve mini optimization problem for this?
+        // // TODO why does making this more accurate slow things down?
+        let min_additional_time_single = self.unstarted_nodes.iter().map(|node| {
             problem.allocation_info.iter()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.time)
                 .min_f64().unwrap()
-        }).sum::<f64>();
+        }).max_f64().unwrap_or(0.0);
+
+        let mut alloc_groups = HashSet::new();
+        let min_additional_time_average = self.unstarted_nodes.iter().map(|node| {
+            problem.allocation_info.iter()
+                .filter(|alloc| alloc.node == *node)
+                .map(|alloc| {
+                    alloc_groups.insert(alloc.group);
+                    alloc.time
+                })
+                .min_f64().unwrap()
+        }).sum::<f64>() / alloc_groups.len() as f64;
+        assert!(min_additional_time_average.is_finite());
 
         Cost {
-            time: max_f64(self.minimum_time, self.curr_time + min_additional_time),
+            time: max_f64(self.minimum_time, self.curr_time + max_f64(min_additional_time_single, min_additional_time_average)),
             energy: self.curr_energy + min_additional_energy,
         }
     }

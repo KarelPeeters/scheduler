@@ -30,6 +30,9 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
     let mut queue = BinaryHeap::new();
 
     // add root state
+    // TODO initially try to find a solution asap (so sort by nodes computed) and closeness to done,
+    //    then we can at least start pruning
+    //   at that point switch the queue order to be min time/energy 
     if root_state.is_done(problem) {
         assert!(frontier_done.add(&root_state.current_cost(), &(), || root_state.clone()));
         reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
@@ -115,7 +118,13 @@ pub struct OrdState {
 impl OrdState {
     pub fn new(problem: &Problem, state: State) -> Self {
         let unstarted = state.unstarted_nodes.len();
-        Self { unstarted, cost: state.best_case_cost(problem), state }
+        Self {
+            unstarted,
+            cost: state.current_cost(),
+            state,
+        }
+
+        // Self { unstarted, cost: state.best_case_cost(problem), state }
     }
 }
 
