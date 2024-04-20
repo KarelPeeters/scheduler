@@ -1,2 +1,2 @@
 pub mod graphviz;
-pub mod mini;
+pub mod float;

@@ -14,7 +14,7 @@ use rust::core::solve_recurse::ReporterRecurse;
 use rust::core::state::{Cost, State};
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
-use rust::util::mini::IterFloatExt;
+use rust::util::float::IterFloatExt;
 
 fn main() {
     let problem = test_problem(

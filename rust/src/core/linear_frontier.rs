@@ -7,7 +7,7 @@ use rand::seq::SliceRandom;
 
 use crate::core::frontier::{DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
-use crate::util::mini::{max_f64, min_f64};
+use crate::util::float::{max_f64, min_f64};
 
 pub struct LinearFrontier {
     dimensions: usize,

@@ -6,7 +6,7 @@ use rand::{Rng, thread_rng};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::dom_early_check;
-use crate::util::mini::{max_f64, min_f64};
+use crate::util::float::{max_f64, min_f64};
 
 pub struct NewFrontier {
     _dimensions: usize,

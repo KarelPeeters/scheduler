@@ -8,7 +8,7 @@ use crate::core::new_frontier::SparseVec;
 use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
 use crate::dom_early_check;
-use crate::util::mini::{IterFloatExt, max_f64};
+use crate::util::float::{IterFloatExt, max_f64};
 
 #[derive(Clone)]
 pub struct State {
