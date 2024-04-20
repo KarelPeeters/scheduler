@@ -398,7 +398,7 @@ impl State {
         *trigger = true;
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) -> Result<(), ()> {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -411,6 +411,8 @@ impl State {
         self.maybe_clear_tried(problem);
 
         // complete operations
+        let mut prune = false;
+
         for group in problem.hardware.groups() {
             if let Some(action) = self.state_group[group.0] {
                 if action.time().end > time_end {
@@ -420,22 +422,54 @@ impl State {
 
                 match action {
                     GroupClaim::Core(action) => {
-                        let alloc = &problem.allocation_info[action.alloc.0];
-                        for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
+                        let alloc_info = &problem.allocation_info[action.alloc.0];
+                        let node_info = &problem.graph.node_info[alloc_info.node.0];
+                        for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc_info.node.0].inputs, &alloc_info.input_memories) {
                             self.release_mem_value_read_lock(input_value, input_mem);
                         }
-                        self.mark_mem_value_available(alloc.node, alloc.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+                        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+
+                        // TODO prune
+                        for other_action in &self.actions_taken {
+                            if let Action::Core(other_action) = other_action {
+                                let other_alloc_info = &problem.allocation_info[other_action.alloc.0];
+                                let other_node_info = &problem.graph.node_info[other_alloc_info.node.0];
+
+                                // TODO expand to allow for any smaller output node
+                                // TODO expand to allow non-equal times? swapping gets a lot sketchier though
+                                // TODO check that inputs are still available (or there is enough space to save them)
+                                let could_swap = other_alloc_info.group == alloc_info.group
+                                    && other_alloc_info.time == alloc_info.time
+                                    && other_alloc_info.output_memory == alloc_info.output_memory
+                                    && other_node_info.size_bits <= node_info.size_bits
+                                    && matches!(self.value_mem_availability(other_alloc_info.node, alloc_info.output_memory), Some(ValueState::AvailableNow { read_count: 0, read_lock_count: 0 }));
+
+                                if could_swap && action.alloc.0 < other_action.alloc.0 {
+                                    prune = true;
+                                }
+                            }
+                        }
                     }
                     GroupClaim::Channel(action) => {
                         let channel_info = &problem.hardware.channel_info[action.channel.0];
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+
+                        // TODO prune
                     }
                 }
 
                 self.release_group(group);
             }
         }
+
+        // if prune {
+        //     Err(())
+        // } else {
+        //     Ok(())
+        // }
+
+        Ok(())
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {

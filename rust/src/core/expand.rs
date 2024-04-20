@@ -30,7 +30,10 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
     // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
     if let Some(first_done_time) = state.first_done_time() {
         let mut state_next = state.clone();
-        state_next.do_action_wait(problem, first_done_time);
+        if state_next.do_action_wait(problem, first_done_time).is_err() {
+            // prune
+            return;
+        }
         next(state_next);
     }
 }
