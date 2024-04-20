@@ -35,7 +35,7 @@ impl LinearFrontier {
         let mut order = (0..dimensions).collect_vec();
         let mut rng = SmallRng::seed_from_u64(0);
         order.shuffle(&mut rng);
-        
+
         Self {
             dimensions,
             len: 0,
@@ -170,44 +170,63 @@ impl LinearFrontier {
                     Err(index) => (index, None, index),
                 };
 
-                let mut next_index = 0;
-                let mut any_exit = false;
+                let mut remove_indices = vec![];
 
-                entries.retain_mut(|(_, child)| {
-                    // TODO custom retain_mut that supports early exit?
-                    if any_exit {
-                        return true;
-                    }
-
-                    let index = next_index;
-                    next_index += 1;
-
-                    let (better, worse) = if index < limit_lower {
-                        // TODO turn this into piecewise iteration instead
-                        if branch_new_any_better {
-                            return true;
-                        }
+                macro_rules! visit {
+                    ($index:expr, $better:expr, $worse:expr) => {
+                        let index = $index;
+                        let better = $better;
+                        let worse = $worse;
                         
-                        (branch_new_any_better, true)
-                    } else if Some(index) == index_equal {
-                        (branch_new_any_better, branch_new_any_worse)
-                    } else {
-                        assert!(index >= start_higher);
-
-                        // TODO turn this into piecewise iteration instead
-                        if branch_new_any_worse {
-                            return true;
-                        }
+                        let child = &mut entries[index].1;
+                        let (exit, empty) = self.recurse_drop_and_check_dom(child, new, better, worse, entries_checked);
                         
-                        (true, branch_new_any_worse)
+                        if exit {
+                            assert!(remove_indices.is_empty() && !empty);
+                            return (true, false);
+                        }
+                        if empty {
+                            remove_indices.push(index);
+                        }
                     };
+                }
 
-                    let (exit, empty) = self.recurse_drop_and_check_dom(child, new, better, worse, entries_checked);
-                    any_exit |= exit;
-                    !empty
-                });
+                // lower
+                if !branch_new_any_worse {
+                    for index in 0..limit_lower {
+                        visit!(index, true, false);
+                    }
+                }
+                // equal
+                if let Some(index) = index_equal {
+                    visit!(index, branch_new_any_better, branch_new_any_worse);
+                }
+                // higher
+                if !branch_new_any_better {
+                    for index in start_higher..entries.len() {
+                        visit!(index, false, true);
+                    }
+                }
 
-                (any_exit, entries.is_empty())
+                // remove indices
+                // TODO optimize this even more
+                match remove_indices.as_slice() {
+                    &[] => {},
+                    &[single] => {
+                        entries.remove(single);
+                    },
+                    remove_indices => {
+                        let mut next_i = 0;
+                        entries.retain(|_| {
+                            let i = next_i;
+                            next_i += 1;
+                            !remove_indices.contains(&i)
+                        });
+                    }
+                }
+
+                // result
+                (false, entries.is_empty())
             }
             Node::Leaf(old) => {
                 *entries_checked += 1;
@@ -486,6 +505,12 @@ mod test {
         std::fs::write("ignored/depths.txt", &depths).unwrap();
 
         frontier.print(10);
+
+        println!("Add calls: {}", frontier.add_calls);
+        println!("Add drops: {}", frontier.add_dropped_old);
+        println!("Total drop count: {}", frontier.add_success - frontier.len() as u64);
+
+        println!("baseline removed: {}", baseline.count_add_removed);
 
         println!("Times:");
         println!("  gen=     {}s", total_gen);
