@@ -183,6 +183,7 @@ impl<K, V> Frontier<K, V> {
 }
 
 impl<K: Dominance, V> Frontier<K, V>  {
+    #[inline(never)]
     pub fn would_add(&self, new: &K, aux: &K::Aux) -> bool {
         for (old, _) in self.iter_lru() {
             match new.dominance(old, aux) {
@@ -212,6 +213,7 @@ impl<K: Dominance + Clone, V> Frontier<K, V>  {
     // TODO cow or clarify in name that we might clone
     // TODO clean this up, this signature is annoying, maybe change to (with #must_use)
     //    if let Some(add) = self.prepare_add(new, aux) { add.finish(value) }
+    #[inline(never)]
     pub fn add(&mut self, new: &K, aux: &K::Aux, new_value: impl FnOnce() -> V) -> bool {
         if cfg!(debug_assertions) {
             self.assert_valid();

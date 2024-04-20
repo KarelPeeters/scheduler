@@ -20,6 +20,7 @@ impl ReporterQueue for DummyReporterQueue {
     fn report_new_state(&mut self, _: &Problem, _: &LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
 }
 
+#[inline(never)]
 pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Frontier<Cost, State> {
     let root_state = State::new(problem);
 

@@ -185,20 +185,24 @@ impl CustomReporter {
 
 // TODO common utility trait for this
 impl ReporterQueue for CustomReporter {
+    #[inline(never)]
     fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
         self.report_new_schedule(problem, frontier, cost, state)
     }
 
+    #[inline(never)]
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
         self.report_new_state(problem, frontier_partial, Some(queue), state)
     }
 }
 
 impl ReporterRecurse for CustomReporter {
+    #[inline(never)]
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State) {
         self.report_new_schedule(problem, frontier_done, cost, schedule)
     }
 
+    #[inline(never)]
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, state: &State) {
         self.report_new_state(problem, frontier_partial, None, state)
     }
