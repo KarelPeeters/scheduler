@@ -1,6 +1,7 @@
+use std::cmp::Ordering;
 use std::ops::RangeInclusive;
 
-use itertools::Itertools;
+use itertools::{enumerate, Itertools};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -165,7 +166,7 @@ impl LinearFrontier {
             Node::Branch { axis, entries } => {
                 // TODO switch to linear search once the list is short enough
                 let new_key = new.get(self.axis_order[*axis]);
-                let (limit_lower, index_equal, start_higher) = match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
+                let (limit_lower, index_equal, start_higher) = match slice_search_by(entries, |(k, _)| k.total_cmp(&new_key)) {
                     Ok(index) => (index, Some(index), index + 1),
                     Err(index) => (index, None, index),
                 };
@@ -177,10 +178,10 @@ impl LinearFrontier {
                         let index = $index;
                         let better = $better;
                         let worse = $worse;
-                        
+
                         let child = &mut entries[index].1;
                         let (exit, empty) = self.recurse_drop_and_check_dom(child, new, better, worse, entries_checked);
-                        
+
                         if exit {
                             assert!(remove_indices.is_empty() && !empty);
                             return (true, false);
@@ -442,6 +443,38 @@ impl LinearFrontier {
         self.for_each_entry(|d, _| result.push(d));
         result
     }
+}
+
+fn slice_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize> where F: FnMut(&T) -> Ordering {
+    const LINEAR_MAX_SIZE: usize = 64;
+
+    if slice.len() <= LINEAR_MAX_SIZE {
+        // check final overshoot first because it's pretty likely
+        if let Some(last) = slice.last() {
+            if f(last).is_lt() {
+                return Err(slice.len());
+            }
+        } else {
+            return Err(0);
+        }
+
+        // check the bulk of the slice
+        for (i, v) in enumerate(slice) {
+            match f(v) {
+                // found
+                Ordering::Equal => return Ok(i),
+                // overshot
+                Ordering::Greater => return Err(i),
+                // continue
+                Ordering::Less => {}
+            }
+        }
+
+        // we've already checked for overshoot initially
+        unreachable!()
+    }
+
+    slice.binary_search_by(f)
 }
 
 #[cfg(test)]
