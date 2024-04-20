@@ -15,6 +15,10 @@ pub struct LinearFrontier {
     // TODO is doing our own indexing and garbage collection faster?
     root_node: Option<Node>,
     axis_order: Vec<usize>,
+
+    pub add_calls: u64,
+    pub add_success: u64,
+    pub add_dropped_old: u64,
 }
 
 // TODO custom drop implementation that doesn't recurse as much?
@@ -36,7 +40,10 @@ impl LinearFrontier {
             dimensions,
             len: 0,
             root_node: None,
-            axis_order: order, 
+            axis_order: order,
+            add_calls: 0,
+            add_dropped_old: 0,
+            add_success: 0,
         }
     }
 
@@ -51,7 +58,7 @@ impl LinearFrontier {
         count
     }
 
-    pub fn for_each_entry<'s>(&'s self, mut f: impl FnMut(usize, &'s SparseVec)) {
+    pub fn for_each_entry<F>(&self, mut f: F) where for<'a> F: FnMut(usize, &'a SparseVec) {
         self.for_each_node(|depth, node| {
             match node {
                 Node::Branch { .. } => {}
@@ -60,7 +67,7 @@ impl LinearFrontier {
         })
     }
 
-    fn recurse_for_each_entry<'s>(&self, node: &'s Node, depth: usize, mut f: impl FnMut(usize, &'s SparseVec)) {
+    fn recurse_for_each_entry<F>(&self, node: &Node, depth: usize, mut f: F) where for<'a> F: FnMut(usize, &'a SparseVec) {
         self.recurse_for_each_node(node, depth, &mut |_, node| {
             match node {
                 Node::Branch { .. } => {}
@@ -69,13 +76,13 @@ impl LinearFrontier {
         })
     }
 
-    fn for_each_node<'s>(&'s self, mut f: impl FnMut(usize, &'s Node)) {
+    fn for_each_node<F>(&self, mut f: F) where for<'a> F: FnMut(usize, &'a Node) {
         if let None = &self.root_node {} else if let Some(root_node) = &self.root_node {
             self.recurse_for_each_node(root_node, 0, &mut f);
         }
     }
 
-    fn recurse_for_each_node<'s>(&self, node: &'s Node, depth: usize, f: &mut impl FnMut(usize, &'s Node)) {
+    fn recurse_for_each_node(&self, node: &Node, depth: usize, f: &mut impl FnMut(usize, &Node)) {
         f(depth, node);
 
         match *node {
@@ -93,6 +100,10 @@ impl LinearFrontier {
     // TODO rename: add and drop dominated
     #[inline(never)]
     pub fn add_if_not_dominated(&mut self, new: SparseVec) -> bool {
+        self.add_calls += 1;
+
+        let len_before = self.len;
+
         // check if any old dominates new and remove dominated old entries
         let mut entries_checked = 0;
         if let Some(mut root_node) = std::mem::take(&mut self.root_node) {
@@ -110,6 +121,8 @@ impl LinearFrontier {
         }
 
         // println!("entries_checked={}/{} = {}", entries_checked, self.len(), entries_checked as f64 / self.len() as f64);
+        self.add_success += 1;
+        self.add_dropped_old += (self.len != len_before) as u64;
 
         // insert the new entry
         // TODO move method to Node struct to make lifetimes easier
@@ -218,7 +231,7 @@ impl LinearFrontier {
         }
     }
 
-    fn get_subtree_sample<'n>(&self, node: &'n Node) -> &'n SparseVec {
+    fn get_subtree_sample<'a>(&self, node: &'a Node) -> &'a SparseVec {
         match node {
             Node::Branch { axis: _, entries } => self.get_subtree_sample(&entries[0].1),
             Node::Leaf(entry) => entry,
@@ -352,7 +365,7 @@ impl LinearFrontier {
 
         // check incomparable
         let mut entries = vec![];
-        self.for_each_entry(|_, e| entries.push(e));
+        self.for_each_entry(|_, e| entries.push(e.clone()));
         assert_eq!(self.len, entries.len());
         for i in 0..entries.len() {
             for j in 0..entries.len() {

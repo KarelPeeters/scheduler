@@ -102,6 +102,12 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
         expand(problem, state, &mut next);
     }
 
+    println!("Partial frontier stats:");
+    println!("  add calls: {}", frontier_partial.add_calls);
+    println!("  success: {}, {}", frontier_partial.add_success, frontier_partial.add_success as f64 / frontier_partial.add_calls as f64);
+    println!("  dropped_old: {}, {}", frontier_partial.add_dropped_old, frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64);
+    println!("  total dropped: {}", frontier_partial.add_calls - frontier_partial.len() as u64);
+
     frontier_done
 }
 

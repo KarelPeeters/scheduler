@@ -166,7 +166,9 @@ impl CustomReporter {
             self.next_partial_index += 1;
 
             let queue_len = queue.map(|q| q.len());
-            println!("Partial state: index={}: queue_len={:?}, frontier_len={}", index, queue_len, frontier_partial.len());
+            let success = frontier_partial.add_success as f64 / frontier_partial.add_calls as f64;
+            let dropped = frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64;
+            println!("Partial state: index={}: queue_len={:?}, frontier_len={}, success={}, dropped={}", index, queue_len, frontier_partial.len(), success, dropped);
 
             // let depths = format!("{:?}", frontier_partial.collect_entry_depths());
             // std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
