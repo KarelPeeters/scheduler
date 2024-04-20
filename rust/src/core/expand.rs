@@ -6,6 +6,8 @@ use crate::core::state::{State, ValueState};
 #[inline(never)]
 pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
     // drop non-dead values
+    // TODO only drop dead values if necessary for the actions that are starting at the current time?
+    //   this can be implemented as a prune at the start of weight for simplicity
     for mem in problem.hardware.memories() {
         // memory has unlimited size, no point in ever dropping things
         if problem.hardware.mem_info[mem.0].size_bits.is_none() {
