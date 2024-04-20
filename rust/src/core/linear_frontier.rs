@@ -20,6 +20,7 @@ pub struct LinearFrontier {
     pub add_calls: u64,
     pub add_success: u64,
     pub add_dropped_old: u64,
+    pub entries_checked: u64,
 }
 
 // TODO custom drop implementation that doesn't recurse as much?
@@ -45,6 +46,7 @@ impl LinearFrontier {
             add_calls: 0,
             add_dropped_old: 0,
             add_success: 0,
+            entries_checked: 0,
         }
     }
 
@@ -106,9 +108,10 @@ impl LinearFrontier {
         let len_before = self.len;
 
         // check if any old dominates new and remove dominated old entries
-        let mut entries_checked = 0;
         if let Some(mut root_node) = std::mem::take(&mut self.root_node) {
+            let mut entries_checked = 0;
             let (any_old_dom, empty) = self.recurse_drop_and_check_dom(&mut root_node, &new, false, false, &mut entries_checked);
+            self.entries_checked += entries_checked;
 
             // put root node back (we just took it out for self mut reasons)
             if !empty {
@@ -159,7 +162,7 @@ impl LinearFrontier {
     /// * `false`: no `old` entry dominates or is equal to `new`.
     ///     Some old entries that were dominated by `new` may have been dropped.
     #[inline(never)]
-    fn recurse_drop_and_check_dom(&mut self, node: &mut Node, new: &SparseVec, branch_new_any_better: bool, branch_new_any_worse: bool, entries_checked: &mut usize) -> (bool, bool) {
+    fn recurse_drop_and_check_dom(&mut self, node: &mut Node, new: &SparseVec, branch_new_any_better: bool, branch_new_any_worse: bool, entries_checked: &mut u64) -> (bool, bool) {
         assert!(!(branch_new_any_better && branch_new_any_worse), "should have been filtered out at a higher level");
 
         match node {
