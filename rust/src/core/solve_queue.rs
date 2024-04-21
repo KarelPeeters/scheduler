@@ -28,7 +28,7 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
         reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
         return frontier_done;
     }
-    queue.push(OrdState::new(problem, root_state));
+    queue.push(OrdState::new(problem, target, root_state));
 
     // main loop
     while let Some(state) = queue.pop() {
@@ -41,7 +41,7 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
         assert!(!state.is_done(problem));
 
         // compare against existing done states
-        if !frontier_done.would_add(&state.best_case_cost(problem), &target) {
+        if !frontier_done.would_add(&state.estimate_final_cost_conservative(problem), &target) {
             continue;
         }
 
@@ -85,11 +85,11 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
             // immediately skip bad states here
             // (don't do full comparison yet, that can get expensive and maybe we never need to visit this state again)
             // TODO check how much this helps (and if doing the full would make it much slower)
-            if !frontier_done.would_add(&next_state.best_case_cost(problem), &target) {
+            if !frontier_done.would_add(&next_state.estimate_final_cost_conservative(problem), &target) {
                 return;
             }
 
-            queue.push(OrdState::new(problem, next_state));
+            queue.push(OrdState::new(problem, target, next_state));
         };
 
         expand(problem, state, &mut next);
@@ -106,15 +106,15 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
 
 #[allow(dead_code)]
 pub struct OrdState {
-    unstarted: usize,
-    cost: Cost,
+    target: CostTarget,
     state: State,
+    cost: Cost,
 }
 
 impl OrdState {
-    pub fn new(problem: &Problem, state: State) -> Self {
-        let unstarted = state.unstarted_nodes.len();
-        Self { unstarted, cost: state.best_case_cost(problem), state }
+    pub fn new(problem: &Problem, target: CostTarget, state: State) -> Self {
+        let cost = state.estimate_final_cost_conservative(problem);
+        Self { target, state, cost }
     }
 }
 
@@ -134,15 +134,11 @@ impl PartialOrd for OrdState {
 
 impl Ord for OrdState {
     fn cmp(&self, other: &Self) -> Ordering {
-        // TODO: this heuristic does not have to be conservative,
-        //   we have make some risky but hopefully better predictions!
+        let key = match self.target {
+            CostTarget::Full | CostTarget::Time => |s: &OrdState| (s.cost.time, s.cost.energy),
+            CostTarget::Energy => |s: &OrdState| (s.cost.energy, s.cost.time),
+        };
 
-        let Cost { time: self_time, energy: self_energy } = self.cost;
-        let Cost { time: other_time, energy: other_energy } = other.cost;
-        // TODO which order to pick here? make user-configurable?
-        // (self.unstarted, self_time, self_energy).partial_cmp(&(other.unstarted, other_time, other_energy)).unwrap().reverse()
-        // (self_energy, self_time).partial_cmp(&(other_energy, other_time)).unwrap()
-
-        (self_time, self_energy).partial_cmp(&(other_time, other_energy)).unwrap().reverse()
+        key(self).partial_cmp(&key(other)).unwrap().reverse()
     }
 }

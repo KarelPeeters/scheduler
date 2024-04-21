@@ -66,7 +66,7 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, mut state: State) {
     }
 
     // pruning
-    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &ctx.target) {
+    if !ctx.frontier_done.would_add(&state.estimate_final_cost_conservative(problem), &ctx.target) {
         return;
     }
     let added_partial = ctx.frontier_partial.add_if_not_dominated(state.dom_key_min(problem, ctx.target).0);

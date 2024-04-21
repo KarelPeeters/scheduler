@@ -189,7 +189,7 @@ impl State {
         assert_eq!(expected_value_live_count, self.value_live_count);
     }
 
-    pub fn best_case_cost(&self, problem: &Problem) -> Cost {
+    pub fn estimate_final_cost_conservative(&self, problem: &Problem) -> Cost {
         // TODO precompute these values for each node
         let min_additional_energy = self.unstarted_nodes.iter().map(|node| {
             problem.allocation_info.iter()
