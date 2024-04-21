@@ -681,11 +681,23 @@ impl State {
         };
 
         // basics
-        // TODO start using target here once we support multidimensional keys
-        let _ = target;
-        key.push(next_index(), self.curr_time);
-        key.push(next_index(), self.curr_energy);
-        key.push(next_index(), self.minimum_time);
+        // TODO using ordered tuples would be a lot better here
+        const M: f64 = 1e8; // value chosen to use approximately half of the mantissa bits
+        match target {
+            CostTarget::Full => {
+                key.push(next_index(), self.curr_time);
+                key.push(next_index(), self.curr_energy);
+                key.push(next_index(), self.minimum_time);
+            }
+            CostTarget::Time => {
+                key.push(next_index(), self.curr_time * M + self.curr_energy);
+                key.push(next_index(), self.minimum_time * M + self.curr_energy);
+            }
+            CostTarget::Energy => {
+                key.push(next_index(), self.curr_energy * M + self.curr_time);
+                key.push(next_index(), self.curr_energy * M + self.minimum_time);
+            }
+        }
 
         // group availability
         for group in problem.hardware.groups() {
