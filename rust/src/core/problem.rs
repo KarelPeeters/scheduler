@@ -22,12 +22,11 @@ pub struct Problem {
 pub enum CostTarget {
     // Minimize both time and energy, getting the full pareto front
     Full,
-    // TODO fix the solvers so that the non-full solutions are still optimal in the other axis too?
-    // Minimize time, without caring about energy at all.
-    // This is not guaranteed to return the solution with minimal energy for the given time.
+    // Primarily minimize time, still optimizing energy as the secondary objective.
+    // This will return at most one solution.
     Time,
-    // Minimize energy, without caring about time at all.
-    // This is not guaranteed to return the solution with minimal time for the given energy.
+    // Primarily minimize energy, still optimizing time as the secondary objective.
+    // This will return at most one solution.
     Energy,
 }
 

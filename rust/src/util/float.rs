@@ -1,5 +1,6 @@
 pub trait IterFloatExt: Iterator {
     fn min_f64(self) -> Option<Self::Item>;
+    fn max_f64(self) -> Option<Self::Item>;
 }
 
 impl<I: Iterator<Item = f64>> IterFloatExt for I {
@@ -18,6 +19,10 @@ impl<I: Iterator<Item = f64>> IterFloatExt for I {
             }
         }
         Some(min)
+    }
+
+    fn max_f64(self) -> Option<Self::Item> {
+        self.map(|x| -x).min_f64().map(|x| -x)
     }
 }
 

@@ -303,6 +303,7 @@ fn tricky_drop_case() {
 }
 
 // TODO add test cases with empty output (ie. unsolvable)
+// TODO shuffle graph and hardware indices to check that everything is order-independent
 #[track_caller]
 pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
     let key = |c: &Cost| (OrderedFloat(c.time), OrderedFloat(c.energy));
@@ -314,32 +315,13 @@ pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
             let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
             actual.sort_by_key(key);
 
-            match target {
-                CostTarget::Full => {
-                    assert_eq!(expected, actual, "solve output mismatch for target={:?}, method={:?}", target, method);
-                },
-                CostTarget::Time => {
-                    // only check that time matches
-                    let expected_time = expected.iter().min_by_key(|e| OrderedFloat(e.time)).map(|e| e.time);
-                    match expected_time {
-                        None => assert!(actual.is_empty()),
-                        Some(expected) => {
-                            let actual = actual.iter().map(|c| c.time).collect_vec();
-                            assert_eq!(actual, vec![expected], "solve output mismatch for target={:?}, method={:?}", target, method);
-                        },
-                    }
-                },
-                CostTarget::Energy => {
-                    let expected_energy = expected.iter().min_by_key(|e| OrderedFloat(e.energy)).map(|e| e.energy);
-                    match expected_energy {
-                        None => assert!(actual.is_empty()),
-                        Some(expected) => {
-                            let actual = actual.iter().map(|c| c.energy).collect_vec();
-                            assert_eq!(actual, vec![expected], "solve output mismatch for target={:?}, method={:?}", target, method);
-                        },
-                    }
-                }
-            }
+            let expected_for_target = match target {
+                CostTarget::Full => expected.clone(),
+                CostTarget::Time => expected.iter().copied().min_by_key(|e| OrderedFloat(e.time)).into_iter().collect_vec(),
+                CostTarget::Energy => expected.iter().copied().min_by_key(|e| OrderedFloat(e.energy)).into_iter().collect_vec(),
+            };
+
+            assert_eq!(expected_for_target, actual, "solve output mismatch for target={:?}, method={:?}", target, method);
         }
     }
 }

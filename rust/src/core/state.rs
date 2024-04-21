@@ -203,7 +203,7 @@ impl State {
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.time)
                 .min_f64().unwrap()
-        }).sum::<f64>();
+        }).max_f64().unwrap_or(0.0);
 
         Cost {
             time: max_f64(self.minimum_time, self.curr_time + min_additional_time),
@@ -681,20 +681,11 @@ impl State {
         };
 
         // basics
-        match target {
-            CostTarget::Time => {
-                key.push(next_index(), self.curr_time);
-                key.push(next_index(), self.minimum_time);
-            }
-            CostTarget::Energy => {
-                key.push(next_index(), self.curr_energy);
-            }
-            CostTarget::Full => {
-                key.push(next_index(), self.curr_time);
-                key.push(next_index(), self.curr_energy);
-                key.push(next_index(), self.minimum_time);
-            }
-        }
+        // TODO start using target here once we support multidimensional keys
+        let _ = target;
+        key.push(next_index(), self.curr_time);
+        key.push(next_index(), self.curr_energy);
+        key.push(next_index(), self.minimum_time);
 
         // group availability
         for group in problem.hardware.groups() {
@@ -886,10 +877,10 @@ impl Dominance for Cost {
 
         match *target {
             CostTarget::Time => {
-                dom.minimize(|s| s.time);
+                dom.minimize(|s| (s.time, s.energy));
             }
             CostTarget::Energy => {
-                dom.minimize(|s| s.energy);
+                dom.minimize(|s| (s.energy, s.time));
             }
             CostTarget::Full => {
                 dom.minimize(|s| s.time);
