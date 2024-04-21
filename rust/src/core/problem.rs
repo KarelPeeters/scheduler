@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::ops::Range;
+
 use itertools::Itertools;
 
 use crate::util::graphviz::GraphViz;
@@ -15,6 +16,19 @@ pub struct Problem {
 
     pub input_placements: Vec<Memory>,
     pub output_placements: Vec<Memory>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum CostTarget {
+    // Minimize both time and energy, getting the full pareto front
+    Full,
+    // TODO fix the solvers so that the non-full solutions are still optimal in the other axis too?
+    // Minimize time, without caring about energy at all.
+    // This is not guaranteed to return the solution with minimal energy for the given time.
+    Time,
+    // Minimize energy, without caring about time at all.
+    // This is not guaranteed to return the solution with minimal time for the given energy.
+    Energy,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]

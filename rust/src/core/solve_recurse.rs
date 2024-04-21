@@ -1,7 +1,7 @@
 use crate::core::expand::expand;
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
-use crate::core::problem::Problem;
+use crate::core::problem::{CostTarget, Problem};
 use crate::core::state::{Cost, State};
 
 pub trait ReporterRecurse {
@@ -9,29 +9,23 @@ pub trait ReporterRecurse {
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, state: &State);
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct DummyReporterRecurse;
-
-impl ReporterRecurse for DummyReporterRecurse {
-    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut LinearFrontier, _: &State) {}
-}
-
 pub struct Context<'p, 'r, 'f, R: ReporterRecurse> {
     problem: &'p Problem,
+    target: CostTarget,
     reporter: &'r mut R,
     frontier_done: &'f mut Frontier<Cost, State>,
     frontier_partial: &'f mut LinearFrontier,
 }
 
-pub fn solve_recurse(problem: &Problem, reporter: &mut impl ReporterRecurse) -> Frontier<Cost, State> {
+pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterRecurse) -> Frontier<Cost, State> {
     let state = State::new(problem);
 
     let mut frontier_done = Frontier::new();
-    let mut frontier_partial_linear = LinearFrontier::new(state.dom_key_min(problem).1);
+    let mut frontier_partial_linear = LinearFrontier::new(state.dom_key_min(problem, target).1);
 
     let mut ctx = Context {
         problem,
+        target,
         reporter,
         frontier_done: &mut frontier_done,
         frontier_partial: &mut frontier_partial_linear,
@@ -63,7 +57,7 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, mut state: State) {
         assert_eq!(state.curr_time, state.minimum_time);
 
         let cost = state.current_cost();
-        let added_done = ctx.frontier_done.add(&cost, &(), || state.clone());
+        let added_done = ctx.frontier_done.add(&cost, &ctx.target, || state.clone());
         if added_done {
             ctx.reporter.report_new_schedule(problem, ctx.frontier_done, cost, &state);
         }
@@ -72,10 +66,10 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, mut state: State) {
     }
 
     // pruning
-    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &()) {
+    if !ctx.frontier_done.would_add(&state.best_case_cost(problem), &ctx.target) {
         return;
     }
-    let added_partial = ctx.frontier_partial.add_if_not_dominated(state.dom_key_min(problem).0);
+    let added_partial = ctx.frontier_partial.add_if_not_dominated(state.dom_key_min(problem, ctx.target).0);
     if !added_partial {
         return;
     }

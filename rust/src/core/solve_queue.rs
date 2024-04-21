@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use crate::core::expand::expand;
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
-use crate::core::problem::Problem;
+use crate::core::problem::{CostTarget, Problem};
 use crate::core::state::{Cost, State};
 
 pub trait ReporterQueue {
@@ -12,27 +12,19 @@ pub trait ReporterQueue {
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct DummyReporterQueue;
-
-impl ReporterQueue for DummyReporterQueue {
-    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
-}
-
 #[inline(never)]
-pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Frontier<Cost, State> {
+pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterQueue) -> Frontier<Cost, State> {
     let root_state = State::new(problem);
 
     let mut frontier_done = Frontier::new();
-    let mut frontier_partial = LinearFrontier::new(root_state.dom_key_min(problem).1);
+    let mut frontier_partial = LinearFrontier::new(root_state.dom_key_min(problem, target).1);
 
     // TODO why only by cost and not by the full pareto key?
     let mut queue = BinaryHeap::new();
 
     // add root state
     if root_state.is_done(problem) {
-        assert!(frontier_done.add(&root_state.current_cost(), &(), || root_state.clone()));
+        assert!(frontier_done.add(&root_state.current_cost(), &target, || root_state.clone()));
         reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
         return frontier_done;
     }
@@ -49,7 +41,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
         assert!(!state.is_done(problem));
 
         // compare against existing done states
-        if !frontier_done.would_add(&state.best_case_cost(problem), &()) {
+        if !frontier_done.would_add(&state.best_case_cost(problem), &target) {
             continue;
         }
 
@@ -64,7 +56,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
         }
 
         // compare against all existing states
-        let added_linear = frontier_partial.add_if_not_dominated(state.dom_key_min(problem).0);
+        let added_linear = frontier_partial.add_if_not_dominated(state.dom_key_min(problem, target).0);
         if !added_linear {
             continue;
         }
@@ -83,7 +75,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
             // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
             //   similar to the idea to improve the pruning in the other place?
             if next_state.is_done(problem) {
-                let was_added = frontier_done.add(&next_state.current_cost(), &(), || next_state.clone());
+                let was_added = frontier_done.add(&next_state.current_cost(), &target, || next_state.clone());
                 if was_added {
                     reporter.report_new_schedule(problem, &frontier_done, next_state.current_cost(), &next_state);
                 }
@@ -93,7 +85,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
             // immediately skip bad states here
             // (don't do full comparison yet, that can get expensive and maybe we never need to visit this state again)
             // TODO check how much this helps (and if doing the full would make it much slower)
-            if !frontier_done.would_add(&next_state.best_case_cost(problem), &()) {
+            if !frontier_done.would_add(&next_state.best_case_cost(problem), &target) {
                 return;
             }
 

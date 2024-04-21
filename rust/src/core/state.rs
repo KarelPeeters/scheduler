@@ -5,7 +5,7 @@ use itertools::{chain, enumerate, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
-use crate::core::problem::{Allocation, Channel, Group, Memory, Node, Problem};
+use crate::core::problem::{Allocation, Channel, CostTarget, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
 use crate::dom_early_check;
 use crate::util::float::{IterFloatExt, max_f64};
@@ -668,7 +668,7 @@ impl State {
         }
     }
 
-    pub fn dom_key_min(&self, problem: &Problem) -> (SparseVec, usize) {
+    pub fn dom_key_min(&self, problem: &Problem, target: CostTarget) -> (SparseVec, usize) {
         let mut key = SparseVec::new();
         
         // TODO clean this up, maybe just have SparseVec.push that keeps an internal index?
@@ -681,9 +681,20 @@ impl State {
         };
 
         // basics
-        key.push(next_index(), self.curr_time);
-        key.push(next_index(), self.curr_energy);
-        key.push(next_index(), self.minimum_time);
+        match target {
+            CostTarget::Time => {
+                key.push(next_index(), self.curr_time);
+                key.push(next_index(), self.minimum_time);
+            }
+            CostTarget::Energy => {
+                key.push(next_index(), self.curr_energy);
+            }
+            CostTarget::Full => {
+                key.push(next_index(), self.curr_time);
+                key.push(next_index(), self.curr_energy);
+                key.push(next_index(), self.minimum_time);
+            }
+        }
 
         // group availability
         for group in problem.hardware.groups() {
@@ -830,6 +841,9 @@ impl Dominance for State {
         // TODO double-check that this function is both correct and complete
         //   look at examples of reject/accept state pairs!
 
+        // TODO delete this function, it's out of date anyway
+        //   copy the comment somewhere though!
+
         let mut dom = DomBuilder::new(self, other);
 
         // basics
@@ -866,11 +880,23 @@ impl Dominance for State {
 }
 
 impl Dominance for Cost {
-    type Aux = ();
-    fn dominance(&self, other: &Self, _: &()) -> DomDir {
+    type Aux = CostTarget;
+    fn dominance(&self, other: &Self, target: &CostTarget) -> DomDir {
         let mut dom = DomBuilder::new(self, other);
-        dom.minimize(|s| s.time);
-        dom.minimize(|s| s.energy);
+
+        match *target {
+            CostTarget::Time => {
+                dom.minimize(|s| s.time);
+            }
+            CostTarget::Energy => {
+                dom.minimize(|s| s.energy);
+            }
+            CostTarget::Full => {
+                dom.minimize(|s| s.time);
+                dom.minimize(|s| s.energy);
+            }
+        }
+
         dom_early_check!(dom);
         dom.finish()
     }

@@ -1,9 +1,8 @@
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
-use crate::core::problem::{ChannelCost, Graph, Hardware, Problem};
-use crate::core::solve_queue::{DummyReporterQueue, solve_queue};
-use crate::core::solve_recurse::{DummyReporterRecurse, solve_recurse};
+use crate::core::problem::{ChannelCost, CostTarget, Graph, Hardware, Problem};
+use crate::core::solve::{DummyReporter, SolveMethod};
 use crate::core::state::Cost;
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
@@ -303,24 +302,44 @@ fn tricky_drop_case() {
     ]);
 }
 
+// TODO add test cases with empty output (ie. unsolvable)
 #[track_caller]
 pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
     let key = |c: &Cost| (OrderedFloat(c.time), OrderedFloat(c.energy));
     expected.sort_by_key(key);
 
-    // queue
-    {
-        let frontier = solve_queue(problem, &mut DummyReporterQueue);
-        let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
-        actual.sort_by_key(key);
-        assert_eq!(expected, actual, "solve_queue output mismatch");
-    }
+    for target in [CostTarget::Full, CostTarget::Time, CostTarget::Energy] {
+        for method in [SolveMethod::Recurse, SolveMethod::Queue] {
+            let frontier = method.solve(problem, target, &mut DummyReporter);
+            let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
+            actual.sort_by_key(key);
 
-    // recurse
-    {
-        let frontier = solve_recurse(problem, &mut DummyReporterRecurse);
-        let mut actual = frontier.iter_arbitrary().map(|(k, _)| *k).collect_vec();
-        actual.sort_by_key(key);
-        assert_eq!(expected, actual, "solve_recurse output mismatch");
+            match target {
+                CostTarget::Full => {
+                    assert_eq!(expected, actual, "solve output mismatch for target={:?}, method={:?}", target, method);
+                },
+                CostTarget::Time => {
+                    // only check that time matches
+                    let expected_time = expected.iter().min_by_key(|e| OrderedFloat(e.time)).map(|e| e.time);
+                    match expected_time {
+                        None => assert!(actual.is_empty()),
+                        Some(expected) => {
+                            let actual = actual.iter().map(|c| c.time).collect_vec();
+                            assert_eq!(actual, vec![expected], "solve output mismatch for target={:?}, method={:?}", target, method);
+                        },
+                    }
+                },
+                CostTarget::Energy => {
+                    let expected_energy = expected.iter().min_by_key(|e| OrderedFloat(e.energy)).map(|e| e.energy);
+                    match expected_energy {
+                        None => assert!(actual.is_empty()),
+                        Some(expected) => {
+                            let actual = actual.iter().map(|c| c.energy).collect_vec();
+                            assert_eq!(actual, vec![expected], "solve output mismatch for target={:?}, method={:?}", target, method);
+                        },
+                    }
+                }
+            }
+        }
     }
 }
