@@ -37,13 +37,9 @@ fn main() {
     );
     let target = CostTarget::Full;
     let method = SolveMethod::Queue;
+    let partial_plot_frequency = 1000;
     
-    problem.hardware.to_graphviz(problem.core_connected_memories()).export("ignored/hardware.svg").unwrap();
-    problem.graph.to_graphviz().export("ignored/graph.svg").unwrap();
-    problem.assert_valid();
-
-    main_solver(&problem, target, method);
-    // main_milp(&problem);
+    main_solver(&problem, target, method, partial_plot_frequency);
 }
 
 fn main_milp(problem: &Problem) {
@@ -91,11 +87,15 @@ fn main_milp(problem: &Problem) {
     println!("Max time: {}", max_time);
 }
 
-fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod) {
+fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, partial_plot_frequency: u64) {
     let _ = std::fs::remove_dir_all("ignored/schedules/");
     std::fs::create_dir_all("ignored/schedules/done/").unwrap();
     std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
     std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
+
+    problem.hardware.to_graphviz(problem.core_connected_memories()).export("ignored/hardware.svg").unwrap();
+    problem.graph.to_graphviz().export("ignored/graph.svg").unwrap();
+    problem.assert_valid();
 
     let mut reporter = CustomReporter {
         next_done_index: 0,
@@ -103,7 +103,7 @@ fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod) {
         state_counter: 0,
         start: Instant::now(),
         old_frontier_costs: vec![],
-        partial_plot_frequency: 1000,
+        partial_plot_frequency,
     };
 
     let start = Instant::now();
