@@ -158,7 +158,7 @@ impl CustomReporter {
         frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
         self.state_counter += 1;
 
         if self.state_counter % self.partial_plot_frequency == 0 {
@@ -173,6 +173,7 @@ impl CustomReporter {
                 "Partial state: index={}: queue_len={:?}, frontier_len={}, success={:.04}, dropped={:.04}, checked={:.04}",
                 index, queue_len, frontier_partial.len(), success, dropped, checked
             );
+            frontier_partial.clear_stats();
 
             // let depths = format!("{:?}", frontier_partial.collect_entry_depths());
             // std::fs::write("ignored/depths_linear.txt", &depths).unwrap();
@@ -191,7 +192,7 @@ impl ReporterQueue for CustomReporter {
     }
 
     #[inline(never)]
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
         self.report_new_state(problem, frontier_partial, Some(queue), state)
     }
 }

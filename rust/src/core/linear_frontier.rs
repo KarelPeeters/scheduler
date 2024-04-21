@@ -61,6 +61,13 @@ impl LinearFrontier {
         count
     }
 
+    pub fn clear_stats(&mut self) {
+        self.add_calls = 0;
+        self.add_dropped_old = 0;
+        self.add_success = 0;
+        self.entries_checked = 0;
+    }
+
     pub fn for_each_entry<F>(&self, mut f: F) where for<'a> F: FnMut(usize, &'a SparseVec) {
         self.for_each_node(|depth, node| {
             match node {

@@ -9,7 +9,7 @@ use crate::core::state::{Cost, State};
 
 pub trait ReporterQueue {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -17,7 +17,7 @@ pub struct DummyReporterQueue;
 
 impl ReporterQueue for DummyReporterQueue {
     fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: &mut LinearFrontier, _: &BinaryHeap<OrdState>, _: &State) {}
 }
 
 #[inline(never)]
@@ -68,7 +68,7 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
         if !added_linear {
             continue;
         }
-        reporter.report_new_state(problem, &frontier_partial, &queue, &state);
+        reporter.report_new_state(problem, &mut frontier_partial, &queue, &state);
 
         // expand the child states
         // TODO only do done check on states that have just waited?
@@ -103,11 +103,11 @@ pub fn solve_queue(problem: &Problem, reporter: &mut impl ReporterQueue) -> Fron
         expand(problem, state, &mut next);
     }
 
-    println!("Partial frontier stats:");
-    println!("  add calls: {}", frontier_partial.add_calls);
-    println!("  success: {}, {}", frontier_partial.add_success, frontier_partial.add_success as f64 / frontier_partial.add_calls as f64);
-    println!("  dropped_old: {}, {}", frontier_partial.add_dropped_old, frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64);
-    println!("  total dropped: {}", frontier_partial.add_calls - frontier_partial.len() as u64);
+    // println!("Partial frontier stats:");
+    // println!("  add calls: {}", frontier_partial.add_calls);
+    // println!("  success: {}, {}", frontier_partial.add_success, frontier_partial.add_success as f64 / frontier_partial.add_calls as f64);
+    // println!("  dropped_old: {}, {}", frontier_partial.add_dropped_old, frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64);
+    // println!("  total dropped: {}", frontier_partial.add_calls - frontier_partial.len() as u64);
 
     frontier_done
 }
