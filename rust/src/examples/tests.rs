@@ -26,7 +26,7 @@ fn single_normal() {
         TestGraphParams {
             depth: 0,
             branches: 0,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -49,7 +49,7 @@ fn single_zero_sized_node() {
         TestGraphParams {
             depth: 0,
             branches: 0,
-            cross: false,
+            cross_every: 0,
             node_size: 0,
             weight_size: None,
         },
@@ -72,7 +72,7 @@ fn linear_use_single() {
         TestGraphParams {
             depth: 4,
             branches: 1,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -95,7 +95,7 @@ fn split_use_both() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -121,7 +121,7 @@ fn split_use_single() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -148,7 +148,7 @@ fn single_tradeoff() {
         TestGraphParams {
             depth: 4,
             branches: 1,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -183,7 +183,7 @@ fn split_tradeoff_deep() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -221,7 +221,7 @@ fn split_tradeoff_shallow() {
         TestGraphParams {
             depth: 2,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
@@ -259,7 +259,7 @@ fn single_memory_drop() {
         TestGraphParams {
             depth: 2,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: Some(1000),
         },
@@ -282,7 +282,7 @@ fn tricky_drop_case() {
         TestGraphParams {
             depth: 1,
             branches: 2,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: Some(1000),
         },

@@ -5,7 +5,7 @@ use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardwa
 pub struct TestGraphParams {
     pub depth: usize,
     pub branches: usize,
-    pub cross: bool,
+    pub cross_every: usize,
 
     pub node_size: u64,
     pub weight_size: Option<u64>,
@@ -68,7 +68,7 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     let mut prev = vec![node_input];
     for i_depth in 0..graph_params.depth {
         let next = (0..graph_params.branches).map(|i_branch| {
-            let mut inputs = if graph_params.cross || i_depth == 0 {
+            let mut inputs = if i_depth == 0 || (graph_params.cross_every != 0 && i_depth % graph_params.cross_every == 0) {
                 prev.clone()
             } else {
                 vec![prev[i_branch]]

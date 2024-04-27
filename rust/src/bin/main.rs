@@ -21,7 +21,7 @@ fn main() {
         TestGraphParams {
             depth: 4,
             branches: 4,
-            cross: false,
+            cross_every: 0,
             node_size: 1000,
             weight_size: None,
         },
