@@ -365,7 +365,7 @@ impl LinearFrontier {
         let indent = (depth + 1) * 2;
         match *node {
             Node::Branch { axis, ref entries } => {
-                println!("{:indent$}branch len={}, axis={}", "", self.get_subtree_entry_count(node), axis);
+                println!("{:indent$}branch axis={}, split={}, len={}", "", axis, entries.len(), self.get_subtree_entry_count(node));
                 for (k, e) in entries {
                     println!("{:indent$}  k={}", "", k);
                     self.recurse_print(e, depth + 1, max_depth);
