@@ -32,7 +32,7 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
 
     // main loop
     while let Some(state) = queue.pop() {
-        let mut state = state.state;
+        let state = state.state;
         if cfg!(debug_assertions) {
             state.assert_valid(problem);
         }
@@ -42,16 +42,6 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
 
         // compare against existing done states
         if !frontier_done.would_add(&state.estimate_final_cost_conservative(problem), &target) {
-            continue;
-        }
-
-        // drop dead values
-        //   this needs to be done after every action, not just after waiting:
-        //   actions might have made duplicate values in other memories dead
-        // TODO is this the right place to do this? or should we already do this in next?
-        //    this needs to happen before frontier_partial for sure
-        if state.drop_dead_values(problem).is_err() {
-            // pruned, dead unused value was used
             continue;
         }
 

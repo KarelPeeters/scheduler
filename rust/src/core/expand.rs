@@ -5,9 +5,20 @@ use crate::core::state::{State, ValueState};
 
 #[inline(never)]
 pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
+    // drop dead values
+    //   this needs to be done after every action, not just after waiting:
+    //   actions might have made duplicate values in other memories dead
+    if state.drop_dead_values(problem).is_err() {
+        // prune, unused value turns out to be dead (so it should not have been created anyway)
+        // TODO instead of pruning, recursively subtract all the costs associated with it and just continue?
+        //   maybe even go back and add all partial states?
+        return;
+    }
+    
     // drop non-dead values
     // TODO only drop dead values if necessary for the actions that are starting at the current time?
-    //   this can be implemented as a prune at the start of weight for simplicity
+    //   this can be implemented as a prune at the start of wait for simplicity
+    //   (prune if more space than necessary was created)
     for mem in problem.hardware.memories() {
         // memory has unlimited size, no point in ever dropping things
         if problem.hardware.mem_info[mem.0].size_bits.is_none() {
@@ -72,9 +83,9 @@ fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State
                 }
 
                 // try dropping the value
-                let mut next_state = state.clone();
-                next_state.drop_value(problem, mem, value);
-                next(next_state);
+                let mut state_next = state.clone();
+                state_next.drop_value(problem, mem, value);
+                expand(problem, state_next, next);
 
                 // no need to mark as tried, the trigger stuff already handles that
             }
@@ -119,7 +130,7 @@ fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(
     // do action
     let mut time_range = None;
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_core(problem, alloc)));
-    next(state_next);
+    expand(problem, state_next, next);
 
     // mark as tried
     let prev = state.tried_allocs.insert(alloc, time_range.unwrap()).is_none();
@@ -182,7 +193,7 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
     // do action
     let mut time_range = None;
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_channel(problem, channel, value)));
-    next(state_next);
+    expand(problem, state_next, next);
 
     // mark as tried
     let prev = state.tried_transfers.insert((channel, value), time_range.unwrap());

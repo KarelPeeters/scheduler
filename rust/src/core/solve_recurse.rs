@@ -38,17 +38,9 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
 
 // TODO split this up into smaller functions
 #[inline(never)]
-fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, mut state: State) {
+fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) {
     let problem = ctx.problem;
     state.assert_valid(problem);
-
-    // drop dead values
-    //   this needs to be done after every action, not just after waiting:
-    //   actions might have made duplicate values in other memories dead
-    if state.drop_dead_values(problem).is_err() {
-        // pruned, dead unused value was used
-        return;
-    }
 
     // bookkeeping
     // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
