@@ -1,14 +1,22 @@
 use itertools::{enumerate, Itertools};
-use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, NodeInfo, Problem};
+
+use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, Node, NodeInfo, Problem};
 
 #[derive(Debug, Clone)]
 pub struct TestGraphParams {
     pub depth: usize,
     pub branches: usize,
-    pub cross_every: usize,
+    pub cross: CrossBranches,
 
     pub node_size: u64,
     pub weight_size: Option<u64>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum CrossBranches {
+    Never,
+    EveryNth(usize),
+    ConvWise,
 }
 
 #[derive(Debug, Clone)]
@@ -68,10 +76,10 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     let mut prev = vec![node_input];
     for i_depth in 0..graph_params.depth {
         let next = (0..graph_params.branches).map(|i_branch| {
-            let mut inputs = if i_depth == 0 || (graph_params.cross_every != 0 && i_depth % graph_params.cross_every == 0) {
+            let mut inputs = if i_depth == 0 {
                 prev.clone()
             } else {
-                vec![prev[i_branch]]
+                graph_params.cross.pick_inputs(i_depth, i_branch, &prev)
             };
 
             if let Some(graph_weight_size) = graph_params.weight_size {
@@ -133,5 +141,27 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         allocation_info: allocations,
         input_placements,
         output_placements,
+    }
+}
+
+impl CrossBranches {
+    fn pick_inputs(self, i_depth: usize, i_branch: usize, prev: &[Node]) -> Vec<Node> {
+        match self {
+            CrossBranches::Never => vec![prev[i_branch]],
+            CrossBranches::EveryNth(n) => {
+                if i_depth % n == 0 { prev.to_vec() } else { vec![prev[i_branch]] }
+            }
+            CrossBranches::ConvWise => {
+                let mut result = vec![];
+                if 0 < i_branch {
+                    result.push(prev[i_branch - 1]);
+                }
+                result.push(prev[i_branch]);
+                if i_branch + 1 < prev.len() {
+                    result.push(prev[i_branch + 1]);
+                }
+                result
+            }
+        }
     }
 }

@@ -13,7 +13,7 @@ use rust::core::solve::{CommonReporter, SolveMethod};
 use rust::core::solve_queue::OrdState;
 use rust::core::state::{Cost, State};
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
-use rust::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
+use rust::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
 use rust::util::float::IterFloatExt;
 
 fn main() {
@@ -21,7 +21,7 @@ fn main() {
         TestGraphParams {
             depth: 4,
             branches: 4,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -163,7 +163,7 @@ impl CommonReporter for CustomReporter {
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
         self.state_counter += 1;
 
-        if self.state_counter % self.partial_plot_frequency == 0 {
+        if self.partial_plot_frequency != 0 && self.state_counter % self.partial_plot_frequency == 0 {
             let index = self.next_partial_index;
             self.next_partial_index += 1;
 

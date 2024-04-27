@@ -5,7 +5,7 @@ use crate::core::problem::{ChannelCost, CostTarget, Graph, Hardware, Problem};
 use crate::core::solve::{DummyReporter, SolveMethod};
 use crate::core::state::Cost;
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
-use crate::examples::params::{test_problem, TestGraphParams, TestHardwareParams};
+use crate::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
 
 #[test]
 fn empty() {
@@ -26,7 +26,7 @@ fn single_normal() {
         TestGraphParams {
             depth: 0,
             branches: 0,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -49,7 +49,7 @@ fn single_zero_sized_node() {
         TestGraphParams {
             depth: 0,
             branches: 0,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 0,
             weight_size: None,
         },
@@ -72,7 +72,7 @@ fn linear_use_single() {
         TestGraphParams {
             depth: 4,
             branches: 1,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -95,7 +95,7 @@ fn split_use_both() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -121,7 +121,7 @@ fn split_use_single() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -148,7 +148,7 @@ fn single_tradeoff() {
         TestGraphParams {
             depth: 4,
             branches: 1,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -183,7 +183,7 @@ fn split_tradeoff_deep() {
         TestGraphParams {
             depth: 4,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -221,7 +221,7 @@ fn split_tradeoff_shallow() {
         TestGraphParams {
             depth: 2,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: None,
         },
@@ -259,7 +259,7 @@ fn single_memory_drop() {
         TestGraphParams {
             depth: 2,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: Some(1000),
         },
@@ -282,7 +282,7 @@ fn tricky_drop_case() {
         TestGraphParams {
             depth: 1,
             branches: 2,
-            cross_every: 0,
+            cross: CrossBranches::Never,
             node_size: 1000,
             weight_size: Some(1000),
         },
