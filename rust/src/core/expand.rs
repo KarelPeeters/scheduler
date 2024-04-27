@@ -30,8 +30,12 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
     // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
     if let Some(first_done_time) = state.first_done_time() {
         let mut state_next = state.clone();
-        state_next.do_action_wait(problem, first_done_time);
-        next(state_next);
+        match state_next.do_action_wait(problem, first_done_time) {
+            // success, continue with the next state
+            Ok(_) => next(state_next),
+            // pruned, don't do anything
+            Err(_) => {}
+        }
     }
 }
 
@@ -45,7 +49,7 @@ fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State
             None | Some(ValueState::AvailableAtTime(_)) => {
                 continue;
             }
-            Some(&ValueState::AvailableNow { read_lock_count, read_count: _ }) => {
+            Some(&ValueState::AvailableNow { read_lock_count, read_count: _, since: _ }) => {
                 let mut trigger = state.new_trigger();
 
                 if read_lock_count == 0 {

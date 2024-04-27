@@ -71,6 +71,9 @@ pub enum ValueState {
         read_lock_count: u64,
         // the number of reads that happened in total,
         read_count: u64,
+
+        // the initial time since when the value has been continuously available
+        since: Time,
     },
     AvailableAtTime(Time),
 }
@@ -102,7 +105,8 @@ impl State {
         let mut value_live_count = vec![0; node_count];
 
         for (&value, &mem) in zip_eq(&graph.inputs, &problem.input_placements) {
-            let prev = state_memory_node[mem.0].insert(value, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+            let state = ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: Time(0) };
+            let prev = state_memory_node[mem.0].insert(value, state);
             assert!(prev.is_none());
             value_live_count[value.0] += 1;
         }
@@ -169,7 +173,7 @@ impl State {
                 expected_value_live_count[node.0] += 1;
 
                 match node_actual {
-                    ValueState::AvailableNow { read_lock_count, read_count: _ } => {
+                    ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
                         assert_eq!(expected.get(node).copied().unwrap_or(0), read_lock_count)
                     }
                     ValueState::AvailableAtTime(_) => assert!(!expected.contains_key(node)),
@@ -178,7 +182,7 @@ impl State {
 
             for (node, &expected_read_lock_count) in expected {
                 match *actual.get(node).unwrap() {
-                    ValueState::AvailableNow { read_count: _, read_lock_count  } => {
+                    ValueState::AvailableNow { read_count: _, read_lock_count, since: _ } => {
                         assert_eq!(read_lock_count, expected_read_lock_count);
                     }
                     ValueState::AvailableAtTime(_) => panic!(),
@@ -216,9 +220,14 @@ impl State {
         self.state_memory_node[mem.0].get(&value).copied()
     }
 
-    pub fn value_available_in_mem_now(&self, value: Node, mem: Memory) -> bool {
+    pub fn value_available_in_mem_now(&self, value: Node, mem: Memory, since_max: Option<Time>) -> bool {
         match self.value_mem_availability(value, mem) {
-            Some(ValueState::AvailableNow { .. }) => true,
+            Some(ValueState::AvailableNow { read_lock_count: _, read_count: _, since }) => {
+                match since_max {
+                    None => true,
+                    Some(since_max) => since <= since_max,
+                }
+            },
             Some(ValueState::AvailableAtTime(_)) => false,
             None => false,
         }
@@ -227,7 +236,7 @@ impl State {
     pub fn has_achieved_output_placements(&self, problem: &Problem) -> bool {
         for (output_i, &mem) in enumerate(&problem.output_placements) {
             let output = problem.graph.outputs[output_i];
-            if !self.value_available_in_mem_now(output, mem) {
+            if !self.value_available_in_mem_now(output, mem, None) {
                 return false;
             }
         }
@@ -294,7 +303,7 @@ impl State {
         let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
 
         match availability {
-            ValueState::AvailableNow { read_lock_count, read_count } => {
+            ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
                 *read_lock_count += 1;
                 *read_count += 1;
 
@@ -310,7 +319,7 @@ impl State {
     fn release_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
         let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
         match availability {
-            ValueState::AvailableNow { read_lock_count, read_count: _ } => {
+            ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
                 if *read_lock_count == 0 {
@@ -325,7 +334,7 @@ impl State {
         let prev = self.state_memory_node[mem.0].insert(value, availability);
 
         match availability {
-            ValueState::AvailableNow { read_lock_count, read_count } => {
+            ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
                 assert!(matches!(prev, Some(ValueState::AvailableAtTime(_))));
 
                 let trigger = &mut self.trigger_value_mem_available[value.0][mem.0];
@@ -357,7 +366,7 @@ impl State {
 
         // remove
         let prev = self.state_memory_node[mem.0].remove(&value);
-        assert!(matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _ })));
+        assert!(matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _, since: _ })));
         assert!(prev.is_some());
 
         let live_count = &mut self.value_live_count[value.0];
@@ -398,7 +407,7 @@ impl State {
         *trigger = true;
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> Result<(), ()> {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -410,6 +419,8 @@ impl State {
         self.clear_triggers();
         self.maybe_clear_tried(problem);
 
+        let mut fail = false;
+
         // complete operations
         for group in problem.hardware.groups() {
             if let Some(action) = self.state_group[group.0] {
@@ -420,34 +431,96 @@ impl State {
 
                 match action {
                     GroupClaim::Core(action) => {
-                        let alloc = &problem.allocation_info[action.alloc.0];
-                        for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
+                        let alloc_info = &problem.allocation_info[action.alloc.0];
+                        for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc_info.node.0].inputs, &alloc_info.input_memories) {
                             self.release_mem_value_read_lock(input_value, input_mem);
                         }
-                        self.mark_mem_value_available(alloc.node, alloc.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+                        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
+
+                        // symmetry breaking
+                        if !fail {
+                            for &other_action in &self.actions_taken {
+                                if let Action::Core(other_action) = other_action {
+                                    if action.alloc.0 < other_action.alloc.0 && self.could_swap_core_actions(problem, action, other_action) {
+                                        // println!("swapping");
+                                        fail = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                     GroupClaim::Channel(action) => {
                         let channel_info = &problem.hardware.channel_info[action.channel.0];
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
-                        self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0 });
+                        self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
                     }
                 }
 
                 self.release_group(group);
             }
         }
+
+        if fail {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn could_swap_core_actions(&self, problem: &Problem, curr_action: ActionCore, other_action: ActionCore) -> bool {
+        let curr_info = &problem.allocation_info[curr_action.alloc.0];
+        let other_info = &problem.allocation_info[other_action.alloc.0];
+
+        // things to check:
+        // * inputs of the earlier node are still available (tricky, they've probably been deleted because they're dead)
+        // * the outputs of the earlier node have still not been used
+
+        // TODO only allow exact time sizes for now, other arrangements are more questionable
+        //  (eg. what if we create an earlier gap)
+        // check that operands are still available (for the entire duration of the current action)
+        //  TODO expand to "there was enough memory space during the entire period to keep the operands" to deal with dead operands
+
+        // TODO less arbitrary symmetry check (we want invariance according to graph order)?
+
+        let other_has_not_been_used = matches!(
+            self.value_mem_availability(other_info.node, other_info.output_memory),
+            Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
+        );
+
+        let other_has_operands_now = problem.graph.node_info[other_info.node.0].inputs.iter().enumerate().all(|(i, &other_input)| {
+            self.value_available_in_mem_now(other_input, other_info.input_memories[i], Some(self.curr_time - other_info.time))
+        });
+
+        let curr_has_operands_earlier = problem.graph.node_info[other_info.node.0].inputs.iter().enumerate().all(|(i, &curr_input)| {
+            // TODO this is too strict, we don't need them to still be available now, just for the previous time range
+            self.value_available_in_mem_now(curr_input, curr_info.input_memories[i], Some(other_action.time.end - curr_info.time))
+        });
+
+        let could_swap = other_has_operands_now
+            && other_has_not_been_used
+            && curr_has_operands_earlier
+            && other_info.time == curr_info.time;
+
+        could_swap
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
-        for mem_i in 0..self.state_memory_node.len() {
-            let mem = Memory(mem_i);
+        for mem in problem.hardware.memories() {
+            // don't drop dead values in inf sized memories
+            // * it's useless anyway
+            // * this makes value liveness checking for past time ranges easier
+            if problem.hardware.mem_info[mem.0].size_bits.is_none() {
+                continue;
+            }
+
             let used_before = self.mem_space_used(problem, mem);
 
             let mem_content = &mut self.state_memory_node[mem.0];
             let mut exit = false;
 
             mem_content.retain(|&value, &mut availability| {
-                if let ValueState::AvailableNow { read_lock_count, read_count } = availability {
+                if let ValueState::AvailableNow { read_lock_count, read_count, since: _ } = availability {
                     let dead = self.value_remaining_unstarted_uses[value.0] == 0;
 
                     if read_lock_count > 0 || !dead {
@@ -680,7 +753,7 @@ impl State {
         // value chosen to use approximately half of the bits
         // TODO using ordered tuples would be a lot better here
         const M: i64 = i32::MAX as i64;
-        
+
         let minimum_time_left = self.minimum_time - self.curr_time;
 
         match target {
@@ -777,7 +850,7 @@ impl Trigger<'_> {
     #[must_use]
     pub fn check_mem_value_available(&mut self, mem: Memory, value: Node) -> bool {
         self.result(
-            self.state.value_available_in_mem_now(value, mem),
+            self.state.value_available_in_mem_now(value, mem, None),
             self.state.trigger_value_mem_available[value.0][mem.0],
         )
     }
@@ -795,7 +868,7 @@ impl Trigger<'_> {
     pub fn check_mem_value_unlocked_and_read(&mut self, mem: Memory, value: Node) -> bool {
         let valid = match self.state.value_mem_availability(value, mem) {
             None | Some(ValueState::AvailableAtTime(_)) => false,
-            Some(ValueState::AvailableNow { read_lock_count, read_count }) => {
+            Some(ValueState::AvailableNow { read_lock_count, read_count, since: _ }) => {
                 read_lock_count == 0 && read_count > 0
             }
         };

@@ -137,7 +137,7 @@ impl State {
                     let node_info = &graph.node_info[alloc_info.node.0];
 
                     let row = alloc_info.group.0;
-                    let text = format!("{}\n{}", node_info.id, alloc_info.id);
+                    let text = format!("#{} {} {}", action.alloc.0, node_info.id, alloc_info.id);
                     rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "green", &text)?;
                 }
                 Action::Channel(action) => {
