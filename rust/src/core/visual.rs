@@ -10,6 +10,7 @@ use crate::core::frontier::Frontier;
 use crate::core::problem::{Memory, Problem};
 use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
+use crate::core::wrapper::Time;
 
 impl State {
     pub fn write_svg_to<F: Write>(&self, problem: &Problem, mut f: F) -> std::io::Result<()> {
@@ -17,7 +18,7 @@ impl State {
         let graph = &problem.graph;
 
         let row_count = hardware.groups().len() + hardware.memories().len();
-        let time_max = self.minimum_time;
+        let time_max = self.minimum_time.0 as f64;
 
         let row_height = 70.0;
         let padding_left = 150.0;
@@ -137,14 +138,14 @@ impl State {
 
                     let row = alloc_info.group.0;
                     let text = format!("{}\n{}", node_info.id, alloc_info.id);
-                    rect(&mut f, row, action.time.start, action.time.end, "green", &text)?;
+                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "green", &text)?;
                 }
                 Action::Channel(action) => {
                     let channel_info = &hardware.channel_info[action.channel.0];
                     let node_info = &graph.node_info[action.value.0];
 
                     let row = channel_info.group.0;
-                    rect(&mut f, row, action.time.start, action.time.end, "darkorange", &node_info.id)?;
+                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "darkorange", &node_info.id)?;
                 }
             }
         }
@@ -154,11 +155,11 @@ impl State {
         for (node, mem) in zip_eq(&graph.inputs, &problem.input_placements) {
             mem_time_bits_used[mem.0][0].1 += graph.node_info[node.0].size_bits;
         }
-        let mut add_size_delta = |mem: Memory, time: f64, delta: i64| {
+        let mut add_size_delta = |mem: Memory, time: Time, delta: i64| {
             let vec = &mut mem_time_bits_used[mem.0];
             let &(_, prev_used) = vec.last().unwrap();
-            vec.push((time, prev_used));
-            vec.push((time, prev_used.checked_add_signed(delta).unwrap()));
+            vec.push((time.0 as f64, prev_used));
+            vec.push((time.0 as f64, prev_used.checked_add_signed(delta).unwrap()));
         };
         for action in &self.actions_taken {
             match action {
@@ -245,7 +246,7 @@ impl State {
         writeln!(
             f,
             "<line x1='{x}' y1='0' x2='{x}' y2='{h}' stroke='red' stroke-dasharray='5,5' />",
-            x = time_to_x(self.curr_time),
+            x = time_to_x(self.curr_time.0 as f64),
             h = figure_height
         )?;
 
@@ -268,9 +269,9 @@ impl State {
             let graph = &problem.graph;
 
             writeln!(f, "Basics:")?;
-            writeln!(f, "  curr_time={}", s.curr_time)?;
-            writeln!(f, "  curr_energy={}", s.curr_energy)?;
-            writeln!(f, "  minimum_time={}", s.minimum_time)?;
+            writeln!(f, "  curr_time={}", s.curr_time.0)?;
+            writeln!(f, "  curr_energy={}", s.curr_energy.0)?;
+            writeln!(f, "  minimum_time={}", s.minimum_time.0)?;
             writeln!(f)?;
 
             writeln!(f, "Memory:")?;
@@ -368,9 +369,9 @@ impl<V> Frontier<Cost, V> {
         let curr = self.iter_arbitrary().map(|(&c, _)| c).collect::<Vec<_>>();
         
         let scatter_old = poloto::build::plot("old")
-            .scatter(old.iter().filter(|c| !curr.contains(c)).map(|c| (c.time, c.energy)));
+            .scatter(old.iter().filter(|c| !curr.contains(c)).map(|c| (c.time.0 as f64, c.energy.0 as f64)));
         let scatter_curr = poloto::build::plot("curr")
-            .scatter(curr.iter().map(|c| (c.time, c.energy)));
+            .scatter(curr.iter().map(|c| (c.time.0 as f64, c.energy.0 as f64)));
         
         let plots = poloto::plots!(scatter_old, scatter_curr);
 

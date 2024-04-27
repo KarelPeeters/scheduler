@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 
 use itertools::{enumerate, zip_eq};
@@ -7,8 +7,8 @@ use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
 use crate::core::problem::{Allocation, Channel, CostTarget, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
+use crate::core::wrapper::{Energy, Time};
 use crate::dom_early_check;
-use crate::util::float::{IterFloatExt, max_f64};
 
 #[derive(Clone)]
 pub struct State {
@@ -16,9 +16,9 @@ pub struct State {
     pub actions_taken: Vec<Action>,
 
     // memoized information
-    pub curr_time: f64,
-    pub curr_energy: f64,
-    pub minimum_time: f64,
+    pub curr_time: Time,
+    pub curr_energy: Energy,
+    pub minimum_time: Time,
 
     pub state_group: Vec<Option<GroupClaim>>,
     pub state_memory_node: Vec<HashMap<Node, ValueState>>,
@@ -52,8 +52,8 @@ pub enum GroupClaim {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Cost {
-    pub time: f64,
-    pub energy: f64,
+    pub time: Time,
+    pub energy: Energy,
 }
 
 #[derive(Clone, Copy)]
@@ -72,7 +72,7 @@ pub enum ValueState {
         // the number of reads that happened in total,
         read_count: u64,
     },
-    AvailableAtTime(f64),
+    AvailableAtTime(Time),
 }
 
 impl State {
@@ -110,9 +110,9 @@ impl State {
         // construct
         State {
             actions_taken: vec![],
-            curr_time: 0.0,
-            curr_energy: 0.0,
-            minimum_time: 0.0,
+            curr_time: Time(0),
+            curr_energy: Energy(0),
+            minimum_time: Time(0),
             state_group: vec![None; group_count],
             state_memory_node,
             value_live_count,
@@ -195,18 +195,18 @@ impl State {
             problem.allocation_info.iter()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.energy)
-                .min_f64().unwrap()
-        }).sum::<f64>();
+                .min().unwrap()
+        }).sum::<Energy>();
 
         let min_additional_time = self.unstarted_nodes.iter().map(|node| {
             problem.allocation_info.iter()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.time)
-                .min_f64().unwrap()
-        }).max_f64().unwrap_or(0.0);
+                .min().unwrap()
+        }).max().unwrap_or(Time(0));
 
         Cost {
-            time: max_f64(self.minimum_time, self.curr_time + min_additional_time),
+            time: max(self.minimum_time, self.curr_time + min_additional_time),
             energy: self.curr_energy + min_additional_energy,
         }
     }
@@ -270,8 +270,8 @@ impl State {
         }
     }
 
-    pub fn first_done_time(&self) -> Option<f64> {
-        self.state_group.iter().filter_map(|a| a.map(|a| a.time().end)).min_f64()
+    pub fn first_done_time(&self) -> Option<Time> {
+        self.state_group.iter().filter_map(|a| a.map(|a| a.time().end)).min()
     }
 
     #[must_use]
@@ -398,7 +398,7 @@ impl State {
         *trigger = true;
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: f64) {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -564,9 +564,9 @@ impl State {
         time_range
     }
 
-    fn start_action_common(&mut self, action: Action, time_end: f64, energy_delta: f64) {
+    fn start_action_common(&mut self, action: Action, time_end: Time, energy_delta: Energy) {
         self.actions_taken.push(action);
-        self.minimum_time = f64::max(self.minimum_time, time_end);
+        self.minimum_time = max(self.minimum_time, time_end);
         self.curr_energy += energy_delta;
     }
 
@@ -635,22 +635,22 @@ impl State {
         self.tried_allocs = tried_allocs;
     }
 
-    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> f64 {
+    fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {
         if self.value_remaining_unstarted_uses[value.0] == 0 {
             // dead, best possible case
-            return f64::NEG_INFINITY;
+            return i64::MIN;
         }
 
         match self.value_mem_availability(value, mem) {
             // available now
             // TODO use current time here?
-            Some(ValueState::AvailableNow { .. }) => 0.0,
+            Some(ValueState::AvailableNow { .. }) => 0,
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => time - self.curr_time,
+            Some(ValueState::AvailableAtTime(time)) => (time - self.curr_time).0,
             // not even scheduled, worst case
             // TODO is that really true? what if we decide to schedule a state afterwards?
-            None => f64::INFINITY,
+            None => i64::MAX,
         }
     }
 
@@ -676,22 +676,26 @@ impl State {
         };
 
         // basics
+
+        // value chosen to use approximately half of the bits
         // TODO using ordered tuples would be a lot better here
-        const M: f64 = 1e8; // value chosen to use approximately half of the mantissa bits
+        const M: i64 = i32::MAX as i64;
+        
         let minimum_time_left = self.minimum_time - self.curr_time;
+
         match target {
             CostTarget::Full => {
-                key.push(next_index(), self.curr_time);
-                key.push(next_index(), self.curr_energy);
-                key.push(next_index(), minimum_time_left);
+                key.push(next_index(), self.curr_time.0);
+                key.push(next_index(), self.curr_energy.0);
+                key.push(next_index(), minimum_time_left.0);
             }
             CostTarget::Time => {
-                key.push(next_index(), self.curr_time * M + self.curr_energy);
-                key.push(next_index(), minimum_time_left * M + self.curr_energy);
+                key.push(next_index(), self.curr_time.0 * M + self.curr_energy.0);
+                key.push(next_index(), minimum_time_left.0 * M + self.curr_energy.0);
             }
             CostTarget::Energy => {
-                key.push(next_index(), self.curr_energy * M + self.curr_time);
-                key.push(next_index(), self.curr_energy * M + minimum_time_left);
+                key.push(next_index(), self.curr_energy.0 * M + self.curr_time.0);
+                key.push(next_index(), self.curr_energy.0 * M + minimum_time_left.0);
             }
         }
 
@@ -699,8 +703,8 @@ impl State {
         for group in problem.hardware.groups() {
             let v = match self.state_group[group.0] {
                 // TODO go back to using current time here? that fails with actions that take zero time
-                None => f64::NEG_INFINITY,
-                Some(action) => action.time().end - self.curr_time,
+                None => i64::MIN,
+                Some(action) => (action.time().end - self.curr_time).0,
             };
             key.push(next_index(), v);
         }
@@ -716,7 +720,7 @@ impl State {
         // memory space (less used is better for memories with limited size)
         for mem in problem.hardware.memories() {
             if problem.hardware.mem_info[mem.0].size_bits.is_some() {
-                key.push(next_index(), self.mem_space_used(problem, mem) as f64);
+                key.push(next_index(), self.mem_space_used(problem, mem) as i64);
             }
         }
 

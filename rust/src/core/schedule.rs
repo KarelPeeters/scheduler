@@ -1,4 +1,5 @@
 use crate::core::problem::{Allocation, Channel, Memory, Node};
+use crate::core::wrapper::Time;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
@@ -28,21 +29,22 @@ pub struct ActionChannel {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActionDrop {
-    pub time: f64,
+    pub time: Time,
     pub value: Node,
     pub mem: Memory,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimeRange {
-    pub start: f64,
-    pub end: f64,
+    pub start: Time,
+    /// exclusive
+    pub end: Time,
 }
-
 
 impl TimeRange {
     pub fn overlaps(self, other: TimeRange) -> bool {
-        assert!(!self.start.is_nan() && !self.end.is_nan() && !other.start.is_nan() && !other.end.is_nan());
+        assert!(self.start <= self.end);
+        assert!(other.start <= other.end);
         self.start < other.end && other.start < self.end
     }
 }

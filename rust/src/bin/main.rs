@@ -4,7 +4,6 @@ use std::collections::{BinaryHeap, HashSet, VecDeque};
 use std::time::Instant;
 
 use itertools::{enumerate, Itertools};
-use ordered_float::OrderedFloat;
 
 use rust::core::frontier::Frontier;
 use rust::core::linear_frontier::LinearFrontier;
@@ -12,17 +11,17 @@ use rust::core::problem::{CostTarget, Problem};
 use rust::core::solve::{CommonReporter, SolveMethod};
 use rust::core::solve_queue::OrdState;
 use rust::core::state::{Cost, State};
+use rust::core::wrapper::Time;
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
-use rust::util::float::IterFloatExt;
 
 fn main() {
     let problem = test_problem(
         TestGraphParams {
             depth: 4,
-            branches: 4,
+            branches: 3,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -33,7 +32,7 @@ fn main() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
     let target = CostTarget::Full;
     let method = SolveMethod::Queue;
@@ -43,48 +42,48 @@ fn main() {
 }
 
 fn main_milp(problem: &Problem) {
-    let mut max_time = 0.0;
+    let mut max_time = Time(0);
     let mut deltas = HashSet::new();
 
     for alloc in &problem.allocation_info {
-        deltas.insert(OrderedFloat(alloc.time));
+        deltas.insert(alloc.time);
     }
     for node in problem.graph.nodes() {
         let node_info = &problem.graph.node_info[node.0];
 
         for channel in &problem.hardware.channel_info {
             let channel_value_delta = channel.cost.time_to_transfer(node_info.size_bits);
-            deltas.insert(OrderedFloat(channel_value_delta));
+            deltas.insert(channel_value_delta);
 
             // TODO we may need to copy some values across a channel multiple times, so this is not a perfect bound
             max_time += channel_value_delta;
         }
 
-        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min_f64().unwrap();
+        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min().unwrap();
     }
 
     // collect all possible times
     // TODO upper bound for this?
     let mut visited = HashSet::new();
     let mut todo = VecDeque::new();
-    todo.push_back(0.0);
+    todo.push_back(Time(0));
     while let Some(time_curr) = todo.pop_front() {
         if time_curr > max_time {
             continue
         }
 
-        if !visited.insert(OrderedFloat(time_curr)) {
+        if !visited.insert(time_curr) {
             continue
         }
-        for delta in &deltas {
-            todo.push_back(time_curr + delta.0);
+        for &delta in &deltas {
+            todo.push_back(time_curr + delta);
         }
     }
 
     let visited = visited.iter().copied().sorted().map(|x| x.0).collect_vec();
     println!("{:?}", visited);
     println!("Distinct time count: {}", visited.len());
-    println!("Max time: {}", max_time);
+    println!("Max time: {}", max_time.0);
 }
 
 fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, partial_plot_frequency: u64) {
@@ -114,7 +113,7 @@ fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, parti
     let solver_elapsed = start.elapsed();
 
     println!("Frontier:");
-    for (c, _) in frontier.iter_arbitrary().sorted_by_key(|(c, _)| (OrderedFloat(c.time), OrderedFloat(c.energy))) {
+    for (c, _) in frontier.iter_arbitrary().sorted_by_key(|(c, _)| (c.time, c.energy)) {
         println!("  {:?}", c);
     }
 
@@ -144,7 +143,7 @@ impl CommonReporter for CustomReporter {
 
         // save entire frontier
         let mut frontier_pairs = frontier.iter_arbitrary().collect_vec();
-        frontier_pairs.sort_by_key(|(c, _)| OrderedFloat(c.time));
+        frontier_pairs.sort_by_key(|(c, _)| c.time);
         for (i, (_, state)) in enumerate(frontier_pairs) {
             state.write_svg_to_file(&problem, format!("ignored/schedules/frontier/{i}.svg")).unwrap();
         }

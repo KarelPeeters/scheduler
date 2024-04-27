@@ -9,3 +9,4 @@ pub mod solve_queue;
 pub mod solve_recurse;
 pub mod state;
 pub mod visual;
+pub mod wrapper;

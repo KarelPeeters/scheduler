@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, min, Ordering};
 use std::ops::RangeInclusive;
 
 use itertools::{enumerate, Itertools};
@@ -8,7 +8,6 @@ use rand::seq::SliceRandom;
 
 use crate::core::frontier::{DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
-use crate::util::float::{max_f64, min_f64};
 
 pub struct LinearFrontier {
     dimensions: usize,
@@ -28,7 +27,7 @@ enum Node {
     Leaf(SparseVec),
     Branch {
         axis: usize,
-        entries: Vec<(f64, Node)>,
+        entries: Vec<(i64, Node)>,
     },
 }
 
@@ -176,7 +175,7 @@ impl LinearFrontier {
             Node::Branch { axis, entries } => {
                 // TODO switch to linear search once the list is short enough
                 let new_key = new.get(self.axis_order[*axis]);
-                let (limit_lower, index_equal, start_higher) = match slice_search_by(entries, |(k, _)| k.total_cmp(&new_key)) {
+                let (limit_lower, index_equal, start_higher) = match slice_search_by(entries, |(k, _)| k.cmp(&new_key)) {
                     Ok(index) => (index, Some(index), index + 1),
                     Err(index) => (index, None, index),
                 };
@@ -302,7 +301,7 @@ impl LinearFrontier {
                 }
 
                 let new_key = new.get(self.axis_order[branch_axis]);
-                match entries.binary_search_by(|(k, _)| k.total_cmp(&new_key)) {
+                match entries.binary_search_by_key(&new_key, |&(k, _)| k) {
                     Ok(index) => {
                         // existing branch found, continue recursing
                         self.recurse_add(&mut entries[index].1, new, depth + 1, next_axis + 1);
@@ -437,12 +436,12 @@ impl LinearFrontier {
         count
     }
 
-    fn get_subtree_axis_value_range(&self, node: &Node, axis: usize) -> Option<RangeInclusive<f64>> {
+    fn get_subtree_axis_value_range(&self, node: &Node, axis: usize) -> Option<RangeInclusive<i64>> {
         let mut range = None;
         self.recurse_for_each_entry(node, 0, |_, e| {
             let v = e.get(self.axis_order[axis]);
-            range = Some(range.map_or((v, v), |(min, max)| {
-                (min_f64(min, v), max_f64(max, v))
+            range = Some(range.map_or((v, v), |(curr_min, curr_max)| {
+                (min(curr_min, v), max(curr_max, v))
             }));
         });
         range.map(|(min, max)| min..=max)
@@ -522,9 +521,9 @@ mod test {
 
             let full_value = (0..dimensions).map(|_| {
                 match rng.gen_range(0..3) {
-                    0 => f64::NEG_INFINITY,
-                    1 => f64::INFINITY,
-                    2 => rng.gen_range(0.0..1.0),
+                    0 => i64::MIN,
+                    1 => i64::MAX,
+                    2 => rng.gen_range(0..256),
                     _ => unreachable!(),
                 }
             }).collect_vec();
@@ -571,8 +570,8 @@ mod test {
         // let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
         //
         // let start = Instant::now();
-        // let mut total_would_add = 0.0;
-        // let mut total_add = 0.0;
+        // let mut total_would_add = 0;
+        // let mut total_add = 0;
         //
         // for i in 0..n {
         //     if i % 100_000 == 0 {
@@ -616,15 +615,16 @@ mod test {
 
     #[test]
     fn bug_from_solver() {
-        let inf = f64::INFINITY;
+        let inf = i64::MAX;
+        let ninf = i64::MIN;
         let data = vec![
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, inf, inf, inf, inf, inf],
-            [0.0, 2000.0, 1000.0, 0.0, 1000.0, 0.0, inf, 1000.0, inf, inf, inf],
-            [1000.0, 2000.0, 1000.0, 1000.0, 1000.0, 0.0, inf, 0.0, inf, inf, inf],
-            [1000.0, 2100.0, 5000.0, 5000.0, 1000.0, -inf, inf, -inf, 5000.0, inf, inf],
-            [5000.0, 2100.0, 5000.0, 5000.0, 5000.0, -inf, inf, -inf, 0.0, inf, inf],
-            [5000.0, 2200.0, 9000.0, 9000.0, 5000.0, -inf, -inf, -inf, -inf, 9000.0, inf],
-            [9000.0, 2200.0, 9000.0, 9000.0, 9000.0, -inf, -inf, -inf, -inf, 0.0, inf],
+            [0, 0, 0, 0, 0, 0, inf, inf, inf, inf, inf],
+            [0, 2000, 1000, 0, 1000, 0, inf, 1000, inf, inf, inf],
+            [1000, 2000, 1000, 1000, 1000, 0, inf, 0, inf, inf, inf],
+            [1000, 2100, 5000, 5000, 1000, ninf, inf, ninf, 5000, inf, inf],
+            [5000, 2100, 5000, 5000, 5000, ninf, inf, ninf, 0, inf, inf],
+            [5000, 2200, 9000, 9000, 5000, ninf, ninf, ninf, ninf, 9000, inf],
+            [9000, 2200, 9000, 9000, 9000, ninf, ninf, ninf, ninf, 0, inf],
         ];
 
         let mut frontier = LinearFrontier::new(data[0].len());

@@ -1,6 +1,7 @@
 use itertools::{enumerate, Itertools};
 
 use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, Node, NodeInfo, Problem};
+use crate::core::wrapper::{Energy, Time};
 
 #[derive(Debug, Clone)]
 pub struct TestGraphParams {
@@ -30,7 +31,7 @@ pub struct TestHardwareParams {
     pub channel_cost_int: ChannelCost,
 }
 
-pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardwareParams, allocs_time_energy: &[(&str, f64, f64)]) -> Problem {
+pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardwareParams, allocs_time_energy: &[(&str, i64, i64)]) -> Problem {
     // hardware
     let mut hardware = Hardware::new("hardware");
 
@@ -123,8 +124,8 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
                     node,
                     input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
                     output_memory: mem_core[i],
-                    time,
-                    energy,
+                    time: Time(time),
+                    energy: Energy(energy),
                 });
             }
         }

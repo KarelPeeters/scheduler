@@ -1,9 +1,9 @@
 use itertools::Itertools;
-use ordered_float::OrderedFloat;
 
 use crate::core::problem::{ChannelCost, CostTarget, Graph, Hardware, Problem};
 use crate::core::solve::{DummyReporter, SolveMethod};
 use crate::core::state::Cost;
+use crate::core::wrapper::{Energy, Time};
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
 
@@ -17,7 +17,7 @@ fn empty() {
         input_placements: vec![],
         output_placements: vec![],
     };
-    expect_solution(&problem, vec![Cost { time: 0.0, energy: 0.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(0), energy: Energy(0) }]);
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn single_normal() {
             depth: 0,
             branches: 0,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -38,9 +38,9 @@ fn single_normal() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
-    expect_solution(&problem, vec![Cost { time: 6000.0, energy: 5000.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(6000), energy: Energy(5000) }]);
 }
 
 #[test]
@@ -61,9 +61,9 @@ fn single_zero_sized_node() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
-    expect_solution(&problem, vec![Cost { time: 4000.0, energy: 1000.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(4000), energy: Energy(1000) }]);
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn linear_use_single() {
             depth: 4,
             branches: 1,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -84,9 +84,9 @@ fn linear_use_single() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
-    expect_solution(&problem, vec![Cost { time: 22_000.0, energy: 9000.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(22_000), energy: Energy(9000) }]);
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn split_use_both() {
             depth: 4,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -107,11 +107,11 @@ fn split_use_both() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
     expect_solution(&problem, vec![
-        Cost { time: 23_000.0, energy: 15000.0 },
-        Cost { time: 38_000.0, energy: 13_000.0 },
+        Cost { time: Time(23_000), energy: Energy(15000) },
+        Cost { time: Time(38_000), energy: Energy(13_000) },
     ]);
 }
 
@@ -122,7 +122,7 @@ fn split_use_single() {
             depth: 4,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -132,14 +132,14 @@ fn split_use_single() {
             mem_size_int: None,
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: ChannelCost {
-                latency: 0.0,
-                time_per_bit: 20.0,
-                energy_per_bit: 1.0,
+                latency: Time(0),
+                time_per_bit: Time(20),
+                energy_per_bit: Energy(1),
             },
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
-    expect_solution(&problem, vec![Cost { time: 38_000.0, energy: 13_000.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(38_000), energy: Energy(13_000) }]);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn single_tradeoff() {
             depth: 4,
             branches: 1,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -160,20 +160,20 @@ fn single_tradeoff() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("slow", 4000.0 * 2.0, 1000.0 * 0.75), ("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
+        &[("slow", 8000, 750), ("mid", 4000, 1000), ("fast", 2000, 1500)],
     );
     expect_solution(&problem, vec![
-        Cost { time: 12000.0, energy: 11500.0 },
-        Cost { time: 14000.0, energy: 11000.0 },
-        Cost { time: 16000.0, energy: 10500.0 },
-        Cost { time: 18000.0, energy: 10000.0 },
-        Cost { time: 20000.0, energy: 9500.0 },
-        Cost { time: 22000.0, energy: 9000.0 },
-        Cost { time: 26000.0, energy: 8750.0 },
-        Cost { time: 30000.0, energy: 8500.0 },
-        Cost { time: 34000.0, energy: 8250.0 },
-        Cost { time: 38000.0, energy: 8000.0 },
-        Cost { time: 42000.0, energy: 7750.0 },
+        Cost { time: Time(12000), energy: Energy(11500) },
+        Cost { time: Time(14000), energy: Energy(11000) },
+        Cost { time: Time(16000), energy: Energy(10500) },
+        Cost { time: Time(18000), energy: Energy(10000) },
+        Cost { time: Time(20000), energy: Energy(9500) },
+        Cost { time: Time(22000), energy: Energy(9000) },
+        Cost { time: Time(26000), energy: Energy(8750) },
+        Cost { time: Time(30000), energy: Energy(8500) },
+        Cost { time: Time(34000), energy: Energy(8250) },
+        Cost { time: Time(38000), energy: Energy(8000) },
+        Cost { time: Time(42000), energy: Energy(7750) },
     ]);
 }
 
@@ -184,7 +184,7 @@ fn split_tradeoff_deep() {
             depth: 4,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -195,23 +195,23 @@ fn split_tradeoff_deep() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
+        &[("mid", 4000, 1000), ("fast", 2000, 1500)],
     );
     expect_solution(&problem, vec![
-        Cost { time: 13000.0, energy: 19500.0 },
-        Cost { time: 14000.0, energy: 19000.0 },
-        Cost { time: 15000.0, energy: 18500.0 },
-        Cost { time: 16000.0, energy: 18000.0 },
-        Cost { time: 17000.0, energy: 17500.0 },
-        Cost { time: 18000.0, energy: 17000.0 },
-        Cost { time: 19000.0, energy: 16500.0 },
-        Cost { time: 20000.0, energy: 16000.0 },
-        Cost { time: 21000.0, energy: 15500.0 },
-        Cost { time: 23000.0, energy: 15000.0 },
-        Cost { time: 32000.0, energy: 14500.0 },
-        Cost { time: 34000.0, energy: 14000.0 },
-        Cost { time: 36000.0, energy: 13500.0 },
-        Cost { time: 38000.0, energy: 13000.0 },
+        Cost { time: Time(13000), energy: Energy(19500) },
+        Cost { time: Time(14000), energy: Energy(19000) },
+        Cost { time: Time(15000), energy: Energy(18500) },
+        Cost { time: Time(16000), energy: Energy(18000) },
+        Cost { time: Time(17000), energy: Energy(17500) },
+        Cost { time: Time(18000), energy: Energy(17000) },
+        Cost { time: Time(19000), energy: Energy(16500) },
+        Cost { time: Time(20000), energy: Energy(16000) },
+        Cost { time: Time(21000), energy: Energy(15500) },
+        Cost { time: Time(23000), energy: Energy(15000) },
+        Cost { time: Time(32000), energy: Energy(14500) },
+        Cost { time: Time(34000), energy: Energy(14000) },
+        Cost { time: Time(36000), energy: Energy(13500) },
+        Cost { time: Time(38000), energy: Energy(13000) },
     ]);
 }
 
@@ -222,7 +222,7 @@ fn split_tradeoff_shallow() {
             depth: 2,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
+            node_size: 500,
             weight_size: None,
         },
         TestHardwareParams {
@@ -233,23 +233,23 @@ fn split_tradeoff_shallow() {
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("slow", 4000.0 * 1.5, 1000.0 / 2.0), ("mid", 4000.0, 1000.0), ("fast", 4000.0 / 2.0, 1000.0 * 1.5)],
+        &[("slow", 6000, 500), ("mid", 4000, 1000), ("fast", 2000, 1500)],
     );
     expect_solution(&problem, vec![
-        Cost { time: 9000.0, energy: 13500.0 },
-        Cost { time: 10000.0, energy: 13000.0 },
-        Cost { time: 11000.0, energy: 12500.0 },
-        Cost { time: 12000.0, energy: 11500.0 },
-        Cost { time: 14000.0, energy: 11000.0 },
-        Cost { time: 15000.0, energy: 10500.0 },
-        Cost { time: 16000.0, energy: 10000.0 },
-        Cost { time: 17000.0, energy: 9500.0 },
-        Cost { time: 19000.0, energy: 9000.0 },
-        Cost { time: 21000.0, energy: 8500.0 },
-        Cost { time: 26000.0, energy: 8000.0 },
-        Cost { time: 28000.0, energy: 7500.0 },
-        Cost { time: 30000.0, energy: 7000.0 },
-        Cost { time: 32000.0, energy: 6500.0 },
+        Cost { time: Time(9000), energy: Energy(13500) },
+        Cost { time: Time(10000), energy: Energy(13000) },
+        Cost { time: Time(11000), energy: Energy(12500) },
+        Cost { time: Time(12000), energy: Energy(11500) },
+        Cost { time: Time(14000), energy: Energy(11000) },
+        Cost { time: Time(15000), energy: Energy(10500) },
+        Cost { time: Time(16000), energy: Energy(10000) },
+        Cost { time: Time(17000), energy: Energy(9500) },
+        Cost { time: Time(19000), energy: Energy(9000) },
+        Cost { time: Time(21000), energy: Energy(8500) },
+        Cost { time: Time(26000), energy: Energy(8000) },
+        Cost { time: Time(28000), energy: Energy(7500) },
+        Cost { time: Time(30000), energy: Energy(7000) },
+        Cost { time: Time(32000), energy: Energy(6500) },
     ]);
 }
 
@@ -260,20 +260,20 @@ fn single_memory_drop() {
             depth: 2,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
-            weight_size: Some(1000),
+            node_size: 500,
+            weight_size: Some(500),
         },
         TestHardwareParams {
             core_count: 1,
             share_group: false,
             mem_size_ext: None,
-            mem_size_int: Some(3000),
+            mem_size_int: Some(1500),
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
-    expect_solution(&problem, vec![Cost { time: 29_000.0, energy: 23_000.0 }]);
+    expect_solution(&problem, vec![Cost { time: Time(29_000), energy: Energy(23_000) }]);
 }
 
 #[test]
@@ -283,22 +283,22 @@ fn tricky_drop_case() {
             depth: 1,
             branches: 2,
             cross: CrossBranches::Never,
-            node_size: 1000,
-            weight_size: Some(1000),
+            node_size: 500,
+            weight_size: Some(500),
         },
         TestHardwareParams {
             core_count: 2,
             share_group: false,
             mem_size_ext: None,
-            mem_size_int: Some(3000),
+            mem_size_int: Some(1500),
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
-        &[("basic", 4000.0, 1000.0)],
+        &[("basic", 4000, 1000)],
     );
     expect_solution(&problem, vec![
-        Cost { time: 12500.0, energy: 14000.0 },
-        Cost { time: 16500.0, energy: 13000.0 },
+        Cost { time: Time(12500), energy: Energy(14000) },
+        Cost { time: Time(16500), energy: Energy(13000) },
     ]);
 }
 
@@ -306,7 +306,7 @@ fn tricky_drop_case() {
 // TODO shuffle graph and hardware indices to check that everything is order-independent
 #[track_caller]
 pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
-    let key = |c: &Cost| (OrderedFloat(c.time), OrderedFloat(c.energy));
+    let key = |c: &Cost| (c.time, c.energy);
     expected.sort_by_key(key);
 
     for target in [CostTarget::Full, CostTarget::Time, CostTarget::Energy] {
@@ -317,8 +317,8 @@ pub fn expect_solution(problem: &Problem, mut expected: Vec<Cost>) {
 
             let expected_for_target = match target {
                 CostTarget::Full => expected.clone(),
-                CostTarget::Time => expected.iter().copied().min_by_key(|e| OrderedFloat(e.time)).into_iter().collect_vec(),
-                CostTarget::Energy => expected.iter().copied().min_by_key(|e| OrderedFloat(e.energy)).into_iter().collect_vec(),
+                CostTarget::Time => expected.iter().copied().min_by_key(|e| e.time).into_iter().collect_vec(),
+                CostTarget::Energy => expected.iter().copied().min_by_key(|e| e.energy).into_iter().collect_vec(),
             };
 
             assert_eq!(expected_for_target, actual, "solve output mismatch for target={:?}, method={:?}", target, method);

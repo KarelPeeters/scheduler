@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use itertools::Itertools;
 
+use crate::core::wrapper::{Energy, Time};
 use crate::util::graphviz::GraphViz;
 
 // problem
@@ -43,8 +44,8 @@ pub struct AllocationInfo {
     pub input_memories: Vec<Memory>,
     pub output_memory: Memory,
 
-    pub time: f64,
-    pub energy: f64,
+    pub time: Time,
+    pub energy: Energy,
 }
 
 // graph
@@ -102,9 +103,11 @@ pub struct ChannelInfo {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ChannelCost {
-    pub latency: f64,
-    pub time_per_bit: f64,
-    pub energy_per_bit: f64,
+    // TODO should we use dedicated allocations per value instead?
+    //   this is just halfway limited again
+    pub latency: Time,
+    pub time_per_bit: Time,
+    pub energy_per_bit: Energy,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -355,9 +358,9 @@ impl Hardware {
                 ("debug", format!("{:?}", channel)),
                 ("id", info.id.clone()),
                 ("group", self.group_info[info.group.0].id.clone()),
-                ("latency", info.cost.latency.to_string()),
-                ("time_per_bit", info.cost.time_per_bit.to_string()),
-                ("energy_per_bit", info.cost.energy_per_bit.to_string()),
+                ("latency", info.cost.latency.0.to_string()),
+                ("time_per_bit", info.cost.time_per_bit.0.to_string()),
+                ("energy_per_bit", info.cost.energy_per_bit.0.to_string()),
             ];
             let mid = format!("channel_{}", channel.0);
 
@@ -406,7 +409,6 @@ impl Hardware {
         let channel = &self.channel_info[channel.0];
         assert!(channel.mem_source.0 < self.memories().len());
         assert!(channel.mem_dest.0 < self.memories().len());
-        channel.cost.assert_valid();
     }
 
     pub fn assert_valid(&self) {
@@ -417,15 +419,11 @@ impl Hardware {
 }
 
 impl ChannelCost {
-    pub fn assert_valid(&self) {
-        assert!(self.latency >= 0.0 && self.time_per_bit >= 0.0 && self.energy_per_bit >= 0.0);
-    }
-    
-    pub fn energy_to_transfer(&self, size_bits: u64) -> f64 {
-        self.energy_per_bit * size_bits as f64
+    pub fn energy_to_transfer(&self, size_bits: u64) -> Energy {
+        self.energy_per_bit * size_bits
     }
 
-    pub fn time_to_transfer(&self, size_bits: u64) -> f64 {
-        self.latency + self.time_per_bit * size_bits as f64
+    pub fn time_to_transfer(&self, size_bits: u64) -> Time {
+        self.latency + self.time_per_bit * size_bits
     }
 }

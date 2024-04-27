@@ -135,8 +135,9 @@ impl PartialOrd for OrdState {
 impl Ord for OrdState {
     fn cmp(&self, other: &Self) -> Ordering {
         let key = match self.target {
-            CostTarget::Full | CostTarget::Time => |s: &OrdState| (s.cost.time, s.cost.energy),
-            CostTarget::Energy => |s: &OrdState| (s.cost.energy, s.cost.time),
+            // TODO is there anything we can do for full that's better than tiebreak towards time?
+            CostTarget::Full | CostTarget::Time => |s: &OrdState| (s.cost.time.0, s.cost.energy.0),
+            CostTarget::Energy => |s: &OrdState| (s.cost.energy.0, s.cost.time.0),
         };
 
         key(self).partial_cmp(&key(other)).unwrap().reverse()

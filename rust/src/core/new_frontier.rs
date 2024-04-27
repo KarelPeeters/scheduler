@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, min, Ordering};
 use std::ops::RangeInclusive;
 
 use itertools::{chain, enumerate};
@@ -6,7 +6,6 @@ use rand::{Rng, thread_rng};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::dom_early_check;
-use crate::util::float::{max_f64, min_f64};
 
 pub struct NewFrontier {
     _dimensions: usize,
@@ -17,7 +16,7 @@ pub struct NewFrontier {
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct SparseVec {
-    entries: Vec<(usize, f64)>,
+    entries: Vec<(usize, i64)>,
 }
 
 pub struct SparseVecPairIterator<'l, 'r> {
@@ -30,13 +29,13 @@ pub struct SparseVecPairIterator<'l, 'r> {
 impl SparseVec {
     // TODO configurable default, either through field or generic?
     // TODO should this be min or max inf? which is most common?
-    pub const DEFAULT: f64 = f64::INFINITY;
+    pub const DEFAULT: i64 = i64::MAX;
 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn from_iter(iter: impl IntoIterator<Item=f64>) -> Self {
+    pub fn from_iter(iter: impl IntoIterator<Item=i64>) -> Self {
         let mut result = Self::new();
         for (i, v) in enumerate(iter) {
             result.push(i, v);
@@ -45,14 +44,15 @@ impl SparseVec {
     }
 
     // TODO go through and avoid using this in as many places as possible
-    pub fn get(&self, index: usize) -> f64 {
+    // TODO this is pretty important, this might be slowing everything down by a lot
+    pub fn get(&self, index: usize) -> i64 {
         match self.entries.binary_search_by_key(&index, |&(k, _)| k) {
             Ok(i) => self.entries[i].1,
             Err(_) => Self::DEFAULT,
         }
     }
 
-    pub fn push(&mut self, index: usize, value: f64) {
+    pub fn push(&mut self, index: usize, value: i64) {
         if let Some(&(prev_index, _)) = self.entries.last() {
             assert!(prev_index < index);
         }
@@ -76,7 +76,7 @@ impl SparseVec {
 }
 
 impl Iterator for SparseVecPairIterator<'_, '_> {
-    type Item = (usize, f64, f64);
+    type Item = (usize, i64, i64);
 
     fn next(&mut self) -> Option<Self::Item> {
         let remaining_left = self.left_index < self.left.entries.len();
@@ -119,7 +119,7 @@ enum Node {
     Branch {
         // TODO if we always cycle, just use depth
         axis: usize,
-        key: f64,
+        key: i64,
 
         // TODO alternate between eq and neq depending on depth to prevent any bias?
         /// entries with `value <= key`
@@ -400,7 +400,7 @@ impl NewFrontier {
                     let new_key = new.get(axis);
                     let old_key = old.get(axis);
 
-                    let (key, left, right) = match new_key.total_cmp(&old_key) {
+                    let (key, left, right) = match new_key.cmp(&old_key) {
                         Ordering::Equal => continue,
                         Ordering::Less => (new_key, new, old),
                         Ordering::Greater => (old_key, old, new),
@@ -547,12 +547,12 @@ impl NewFrontier {
         count
     }
 
-    fn get_subtree_axis_value_range(&self, node: &Node, axis: usize) -> Option<RangeInclusive<f64>> {
+    fn get_subtree_axis_value_range(&self, node: &Node, axis: usize) -> Option<RangeInclusive<i64>> {
         let mut range = None;
         self.recurse_for_each_entry(node, 0, |_, e| {
             let v = e.get(axis);
-            range = Some(range.map_or((v, v), |(min, max)| {
-                (min_f64(min, v), max_f64(max, v))
+            range = Some(range.map_or((v, v), |(curr_min, curr_max)| {
+                (min(curr_min, v), max(curr_max, v))
             }));
         });
         range.map(|(min, max)| min..=max)
@@ -568,7 +568,7 @@ impl NewFrontier {
 // TODO start using again or remove
 #[allow(unused)]
 fn sort_pick_pivot(axis: usize, slice: &mut [SparseVec]) -> Option<usize> {
-    let cmp = |a: &SparseVec, b: &SparseVec| a.get(axis).total_cmp(&b.get(axis));
+    let cmp = |a: &SparseVec, b: &SparseVec| a.get(axis).cmp(&b.get(axis));
     slice.sort_unstable_by(cmp);
 
     let mut pivot_index = None;
@@ -669,7 +669,7 @@ mod test {
                 if rng.gen() {
                     SparseVec::DEFAULT
                 } else {
-                    rng.gen_range(0.0..1.0)
+                    rng.gen_range(0..256)
                 }
             }).collect_vec();
             let value = SparseVec::from_iter(full_value.iter().copied());
@@ -755,15 +755,16 @@ mod test {
 
     #[test]
     fn bug_from_solver() {
-        let inf = f64::INFINITY;
+        let inf = i64::MAX;
+        let ninf = i64::MIN;
         let data = vec![
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, inf, inf, inf, inf, inf],
-            [0.0, 2000.0, 1000.0, 0.0, 1000.0, 0.0, inf, 1000.0, inf, inf, inf],
-            [1000.0, 2000.0, 1000.0, 1000.0, 1000.0, 0.0, inf, 0.0, inf, inf, inf],
-            [1000.0, 2100.0, 5000.0, 5000.0, 1000.0, -inf, inf, -inf, 5000.0, inf, inf],
-            [5000.0, 2100.0, 5000.0, 5000.0, 5000.0, -inf, inf, -inf, 0.0, inf, inf],
-            [5000.0, 2200.0, 9000.0, 9000.0, 5000.0, -inf, -inf, -inf, -inf, 9000.0, inf],
-            [9000.0, 2200.0, 9000.0, 9000.0, 9000.0, -inf, -inf, -inf, -inf, 0.0, inf],
+            [0, 0, 0, 0, 0, 0, inf, inf, inf, inf, inf],
+            [0, 2000, 1000, 0, 1000, 0, inf, 1000, inf, inf, inf],
+            [1000, 2000, 1000, 1000, 1000, 0, inf, 0, inf, inf, inf],
+            [1000, 2100, 5000, 5000, 1000, ninf, inf, ninf, 5000, inf, inf],
+            [5000, 2100, 5000, 5000, 5000, ninf, inf, ninf, 0, inf, inf],
+            [5000, 2200, 9000, 9000, 5000, ninf, ninf, ninf, ninf, 9000, inf],
+            [9000, 2200, 9000, 9000, 9000, ninf, ninf, ninf, ninf, 0, inf],
         ];
 
         let mut frontier = NewFrontier::new(data[0].len(), 1);
