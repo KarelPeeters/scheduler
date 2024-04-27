@@ -1,7 +1,7 @@
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 
-use itertools::{chain, enumerate, zip_eq};
+use itertools::{enumerate, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
@@ -635,20 +635,6 @@ impl State {
         self.tried_allocs = tried_allocs;
     }
 
-    fn value_dom_key_min(&self, value: Node) -> f64 {
-        if self.value_remaining_unstarted_uses[value.0] == 0 {
-            // dead
-            return f64::NEG_INFINITY;
-        }
-        if !self.unstarted_nodes.contains(&value) {
-            // started, maybe even done
-            // TODO get time here
-            return 0.0;
-        }
-        // not even scheduled, worst case
-        return f64::INFINITY;
-    }
-
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> f64 {
         if self.value_remaining_unstarted_uses[value.0] == 0 {
             // dead, best possible case
@@ -661,13 +647,22 @@ impl State {
             Some(ValueState::AvailableNow { .. }) => 0.0,
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => time,
+            Some(ValueState::AvailableAtTime(time)) => time - self.curr_time,
             // not even scheduled, worst case
             // TODO is that really true? what if we decide to schedule a state afterwards?
             None => f64::INFINITY,
         }
     }
 
+    /// A state is better than another state if the second state can be reached from the first one
+    /// by only taking useless or harmful actions. The exhaustive list of these actions is:
+    /// * burn an arbitrary positive amount of energy
+    /// * waste an arbitrary positive amount of time
+    ///     * either right now (ie. increase curr_time)
+    ///     * or as a future promise (ie. increase min_time)
+    ///     * or as part of operations (ie. keep a core operation running for a bit longer then necessary)
+    /// * delete values from memories
+    /// * apply a problem automorphism (harmless)
     pub fn dom_key_min(&self, problem: &Problem, target: CostTarget) -> (SparseVec, usize) {
         let mut key = SparseVec::new();
         
@@ -683,19 +678,20 @@ impl State {
         // basics
         // TODO using ordered tuples would be a lot better here
         const M: f64 = 1e8; // value chosen to use approximately half of the mantissa bits
+        let minimum_time_left = self.minimum_time - self.curr_time;
         match target {
             CostTarget::Full => {
                 key.push(next_index(), self.curr_time);
                 key.push(next_index(), self.curr_energy);
-                key.push(next_index(), self.minimum_time);
+                key.push(next_index(), minimum_time_left);
             }
             CostTarget::Time => {
                 key.push(next_index(), self.curr_time * M + self.curr_energy);
-                key.push(next_index(), self.minimum_time * M + self.curr_energy);
+                key.push(next_index(), minimum_time_left * M + self.curr_energy);
             }
             CostTarget::Energy => {
                 key.push(next_index(), self.curr_energy * M + self.curr_time);
-                key.push(next_index(), self.curr_energy * M + self.minimum_time);
+                key.push(next_index(), self.curr_energy * M + minimum_time_left);
             }
         }
 
@@ -704,15 +700,9 @@ impl State {
             let v = match self.state_group[group.0] {
                 // TODO go back to using current time here? that fails with actions that take zero time
                 None => f64::NEG_INFINITY,
-                Some(action) => action.time().end,
+                Some(action) => action.time().end - self.curr_time,
             };
             key.push(next_index(), v);
-        }
-
-        // value states
-        // TODO is this actually valid?
-        for value in problem.graph.nodes() {
-            key.push(next_index(), self.value_dom_key_min(value));
         }
 
         // value availability
@@ -822,63 +812,6 @@ impl Trigger<'_> {
     pub fn was_triggered(self) -> bool {
         assert!(self.valid);
         self.triggered
-    }
-}
-
-impl Dominance for State {
-    type Aux = Problem;
-
-    /// A state is better than another state if the second state can be reached from the first one
-    /// by only taking useless or harmful actions. The exhaustive list of these actions is:
-    /// * burn an arbitrary positive amount of energy
-    /// * waste an arbitrary positive amount of time
-    ///     * either right now (ie. increase curr_time)
-    ///     * or as a future promise (ie. increase min_time)
-    ///     * or as part of operations (ie. keep a core operation running for a bit longer then necessary)
-    /// * delete values from memories
-    /// * apply a problem automorphism (harmless)
-    fn dominance(&self, other: &Self, problem: &Problem) -> DomDir {
-        // TODO explicitly create the list of useless actions so this function can be double-checked?
-        // TODO relax: we could also take extra actions (eg. copy a value over) to reach dominance, but maybe
-        //   that's second-order stuff that should be kept in the search itself
-        // TODO double-check that this function is both correct and complete
-        //   look at examples of reject/accept state pairs!
-
-        // TODO delete this function, it's out of date anyway
-        //   copy the comment somewhere though!
-
-        let mut dom = DomBuilder::new(self, other);
-
-        // basics
-        dom.minimize(|s| s.curr_time);
-        dom.minimize(|s| s.minimum_time);
-        dom.minimize(|s| s.curr_energy);
-        dom_early_check!(dom);
-
-        // group availability
-        for group in problem.hardware.groups() {
-            dom.minimize(|s| {
-                match s.state_group[group.0] {
-                    None => s.curr_time,
-                    Some(action) => action.time().end,
-                }
-            });
-            dom_early_check!(dom);
-        }
-
-        // value availability
-        for mem in problem.hardware.memories() {
-            for &value in chain(self.state_memory_node[mem.0].keys(), other.state_memory_node[mem.0].keys()) {
-                dom.minimize(|s| s.value_mem_dom_key_min(value, mem));
-                dom_early_check!(dom);
-            }
-        }
-
-        // TODO memory space?
-        // TODO times for locked values? (really this is again just memory space)
-        //    => combine both into a "future memory space" temporal sequence?
-
-        dom.finish()
     }
 }
 
