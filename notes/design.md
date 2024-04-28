@@ -28,12 +28,18 @@
     * For transpose just assume that copy engines are good enough that we can ignore it?
     * Concat just adds memory allocation constraints.
 
-# High level optimizations
+# Current issues
 
-The two biggest issues right now are:
+The biggest issues right now are:
 
 * runtime for a single linear network is O(2^N), we need it to be polynomial at worst
+  * needs some extra pruning trick, eg. only allow doing "no action" if there's some advantage to that later
 * runtime for branches (even just 1xN) is horrible
+  * needs more investigation, probably better symmetry breaking?
+* runtime for networks with weights is bad, there's way too much symmetry in copying them
+  * probably solved by better symmetry breaking?
+
+# High level optimizations
 
 * Try different frontier data structure:
   * each node has lower and upper bound for _each_ index, allowing even more skipping?
