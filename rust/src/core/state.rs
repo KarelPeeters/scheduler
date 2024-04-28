@@ -483,13 +483,14 @@ impl State {
             Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
         );
 
-        let other_has_operands_now = problem.graph.nodes[other_info.node].inputs.iter().enumerate().all(|(i, &other_input)| {
-            self.value_available_in_mem_now(other_input, other_info.input_memories[i], Some(self.curr_time - other_info.time))
+        // TODO this is to strict, if there was enough memory to keep them alive during the entire time that's enough
+        let other_has_operands_now = zip_eq(&problem.graph.nodes[other_info.node].inputs, &other_info.input_memories).all(|(&input_node, &input_mem)| {
+            self.value_available_in_mem_now(input_node, input_mem, Some(self.curr_time - other_info.time))
         });
 
-        let curr_has_operands_earlier = problem.graph.nodes[other_info.node].inputs.iter().enumerate().all(|(i, &curr_input)| {
+        let curr_has_operands_earlier = zip_eq(&problem.graph.nodes[curr_info.node].inputs, &curr_info.input_memories).all(|(&input_node, &input_mem)| {
             // TODO this is too strict, we don't need them to still be available now, just for the previous time range
-            self.value_available_in_mem_now(curr_input, curr_info.input_memories[i], Some(other_action.time.end - curr_info.time))
+            self.value_available_in_mem_now(input_node, input_mem, Some(other_action.time.end - curr_info.time))
         });
 
         let could_swap = other_has_operands_now
