@@ -419,7 +419,7 @@ impl State {
         self.clear_triggers();
         self.maybe_clear_tried(problem);
 
-        let mut fail = false;
+        let mut symmetry_break = false;
 
         // complete operations
         for group in problem.hardware.groups() {
@@ -438,12 +438,11 @@ impl State {
                         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
 
                         // symmetry breaking
-                        if !fail {
+                        if !symmetry_break {
                             for &other_action in &self.actions_taken {
                                 if let Action::Core(other_action) = other_action {
                                     if action.alloc.0 < other_action.alloc.0 && self.could_swap_core_actions(problem, action, other_action) {
-                                        // println!("swapping");
-                                        fail = true;
+                                        symmetry_break = true;
                                         break;
                                     }
                                 }
@@ -454,6 +453,8 @@ impl State {
                         let channel_info = &problem.hardware.channel_info[action.channel.0];
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
+
+                        // TODO can we symmetry-break here too?
                     }
                 }
 
@@ -461,7 +462,7 @@ impl State {
             }
         }
 
-        if fail {
+        if symmetry_break {
             Err(())
         } else {
             Ok(())
@@ -482,6 +483,7 @@ impl State {
         //  TODO expand to "there was enough memory space during the entire period to keep the operands" to deal with dead operands
 
         // TODO less arbitrary symmetry check (we want invariance according to graph order)?
+        // TODO revisit older actions if their outputs still have not been used, maybe we can prune even more
 
         let other_has_not_been_used = matches!(
             self.value_mem_availability(other_info.node, other_info.output_memory),
