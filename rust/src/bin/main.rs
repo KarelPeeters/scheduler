@@ -23,6 +23,7 @@ fn main() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
         },
         TestHardwareParams {
             core_count: 2,

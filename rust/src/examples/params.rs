@@ -8,9 +8,9 @@ pub struct TestGraphParams {
     pub depth: usize,
     pub branches: usize,
     pub cross: CrossBranches,
-
     pub node_size: u64,
     pub weight_size: Option<u64>,
+    pub share_weights: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -76,6 +76,8 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     graph.add_input(node_input);
     let mut prev = vec![node_input];
     for i_depth in 0..graph_params.depth {
+        let mut shared_weight = None;
+        
         let next = (0..graph_params.branches).map(|i_branch| {
             let mut inputs = if i_depth == 0 {
                 prev.clone()
@@ -84,12 +86,23 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
             };
 
             if let Some(graph_weight_size) = graph_params.weight_size {
-                let weight = graph.add_node(NodeInfo {
-                    id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-                    size_bits: graph_weight_size,
-                    inputs: vec![],
-                });
-                graph.add_input(weight);
+                let weight = match shared_weight {
+                    None => {
+                        let weight = graph.add_node(NodeInfo {
+                            id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
+                            size_bits: graph_weight_size,
+                            inputs: vec![],
+                        });
+                        graph.add_input(weight);
+                        weight
+                    }
+                    Some(shared_weight) => shared_weight,
+                };
+
+                if graph_params.share_weights {
+                    shared_weight = Some(weight);
+                }
+                
                 inputs.push(weight);
             }
 
