@@ -558,14 +558,11 @@ impl State {
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
+        // Note: Don't drop dead values in inf sized memories, it's useless and makes future liveness checking 
+        //   for symmetries harder. We still loop through everything to make sure we didn't do any 
+        //   useless dead value transfers.
+        
         for (mem, mem_info) in &problem.hardware.memories {
-            // don't drop dead values in inf sized memories
-            // * it's useless anyway
-            // * this makes value liveness checking for past time ranges easier
-            if mem_info.size_bits.is_none() {
-                continue;
-            }
-
             let used_before = self.mem_space_used(problem, mem);
 
             let mem_content = &mut self.state_memory_node[mem];
@@ -583,6 +580,11 @@ impl State {
                     if read_count == 0 {
                         // dead but never read, prune this state
                         exit = true;
+                        return true;
+                    }
+                    
+                    if mem_info.size_bits.is_none() {
+                        // don't bother _actually_ dropping, we just wanted the dead check
                         return true;
                     }
 
