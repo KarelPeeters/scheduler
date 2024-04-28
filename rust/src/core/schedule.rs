@@ -47,4 +47,8 @@ impl TimeRange {
         assert!(other.start <= other.end);
         self.start < other.end && other.start < self.end
     }
+
+    pub fn len(self) -> Time {
+        self.end - self.start
+    }
 }

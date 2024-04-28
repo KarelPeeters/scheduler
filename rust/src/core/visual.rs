@@ -143,7 +143,8 @@ impl State {
                     let node_info = &graph.nodes[action.value];
 
                     let row = channel_info.group.to_index();
-                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "darkorange", &node_info.id)?;
+                    let text = format!("#({}, {}) {}", action.channel.to_index(), action.value.to_index(), node_info.id);
+                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "darkorange", &text)?;
                 }
             }
         }

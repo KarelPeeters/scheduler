@@ -8,6 +8,7 @@ pub trait TypedIndex: Copy + Clone + Eq + PartialEq + Ord + PartialOrd + Hash {
     fn from_index(inner: usize) -> Self;
 }
 
+// TODO remove ord? it's a bit too implicit
 #[macro_export]
 macro_rules! define_typed_index {
     ($name:ident) => {

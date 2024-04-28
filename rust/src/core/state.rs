@@ -435,7 +435,17 @@ impl State {
                             for &other_action in &self.actions_taken {
                                 if let Action::Core(other_action) = other_action {
                                     let other_info = &problem.allocations[other_action.alloc];
-                                    if alloc_info.group == other_info.group && action.alloc < other_action.alloc && self.could_swap_core_actions(problem, action, other_action) {
+
+                                    // only break symmetry within group
+                                    if alloc_info.group != other_info.group {
+                                        continue
+                                    }
+                                    // check symmetry condition break
+                                    if action.alloc >= other_action.alloc {
+                                        continue
+                                    }
+
+                                    if self.could_swap_core_actions(problem, action, other_action) {
                                         symmetry_break = true;
                                         break;
                                     }
@@ -448,7 +458,28 @@ impl State {
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
 
-                        // TODO can we symmetry-break here too?
+                        // symmetry breaking
+                        if !symmetry_break {
+                            for &other_action in &self.actions_taken {
+                                if let Action::Channel(other_action) = other_action {
+                                    let other_info = &problem.hardware.channels[other_action.channel];
+
+                                    // only break symmetry within group
+                                    if channel_info.group != other_info.group {
+                                        continue;
+                                    }
+                                    // check symmetry condition break
+                                    if (action.channel, action.value) >= (other_action.channel, other_action.value) {
+                                        continue
+                                    }
+
+                                    if self.could_swap_channel_actions(problem, action, other_action) {
+                                        symmetry_break = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -499,6 +530,29 @@ impl State {
             && other_has_not_been_used
             && curr_has_operands_earlier
             && other_info.time == curr_info.time;
+
+        could_swap
+    }
+
+    // TODO also swap across different channels/groups and maybe even across core-channel?
+    fn could_swap_channel_actions(&self, problem: &Problem, curr_action: ActionChannel, other_action: ActionChannel) -> bool {
+        let curr_info = &problem.hardware.channels[curr_action.channel];
+        let other_info = &problem.hardware.channels[other_action.channel];
+        assert_eq!(curr_info.group, other_info.group);
+
+        let other_has_not_been_used = matches!(
+            self.value_mem_availability(other_action.value, other_info.mem_dest),
+            Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
+        );
+
+        // TODO this is too strict, if there was enough memory to keep them alive during the entire time that's enough
+        let other_has_operands_now = self.value_available_in_mem_now(other_action.value, other_info.mem_source, Some(self.curr_time - other_action.time.len()));
+        let curr_has_operands_earlier = self.value_available_in_mem_now(curr_action.value, curr_info.mem_source, Some(other_action.time.end - curr_action.time.len()));
+
+        let could_swap = other_has_operands_now
+            && other_has_not_been_used
+            && curr_has_operands_earlier
+            && other_action.time.len() == curr_action.time.len();
 
         could_swap
     }
