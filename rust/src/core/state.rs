@@ -434,7 +434,8 @@ impl State {
                         if !symmetry_break {
                             for &other_action in &self.actions_taken {
                                 if let Action::Core(other_action) = other_action {
-                                    if action.alloc < other_action.alloc && self.could_swap_core_actions(problem, action, other_action) {
+                                    let other_info = &problem.allocations[other_action.alloc];
+                                    if alloc_info.group == other_info.group && action.alloc < other_action.alloc && self.could_swap_core_actions(problem, action, other_action) {
                                         symmetry_break = true;
                                         break;
                                     }
@@ -465,6 +466,7 @@ impl State {
     fn could_swap_core_actions(&self, problem: &Problem, curr_action: ActionCore, other_action: ActionCore) -> bool {
         let curr_info = &problem.allocations[curr_action.alloc];
         let other_info = &problem.allocations[other_action.alloc];
+        assert_eq!(curr_info.group, other_info.group);
 
         // things to check:
         // * inputs of the earlier node are still available (tricky, they've probably been deleted because they're dead)
@@ -483,7 +485,7 @@ impl State {
             Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
         );
 
-        // TODO this is to strict, if there was enough memory to keep them alive during the entire time that's enough
+        // TODO this is too strict, if there was enough memory to keep them alive during the entire time that's enough
         let other_has_operands_now = zip_eq(&problem.graph.nodes[other_info.node].inputs, &other_info.input_memories).all(|(&input_node, &input_mem)| {
             self.value_available_in_mem_now(input_node, input_mem, Some(self.curr_time - other_info.time))
         });
