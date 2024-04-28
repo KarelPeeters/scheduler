@@ -1,9 +1,9 @@
 use std::collections::HashSet;
-use std::ops::Range;
 
 use itertools::Itertools;
 
-use crate::core::wrapper::{Energy, Time};
+use crate::core::wrapper::{Energy, Time, TypedVec};
+use crate::define_typed_index;
 use crate::util::graphviz::GraphViz;
 
 // problem
@@ -13,7 +13,7 @@ pub struct Problem {
     pub hardware: Hardware,
     pub graph: Graph,
 
-    pub allocation_info: Vec<AllocationInfo>,
+    pub allocations: TypedVec<Allocation, AllocationInfo>,
 
     pub input_placements: Vec<Memory>,
     pub output_placements: Vec<Memory>,
@@ -31,8 +31,7 @@ pub enum CostTarget {
     Energy,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Allocation(pub usize);
+define_typed_index!(Allocation);
 
 // TODO rename this to something better, maybe mapping?
 #[derive(Debug)]
@@ -52,14 +51,13 @@ pub struct AllocationInfo {
 #[derive(Debug)]
 pub struct Graph {
     pub id: String,
-    pub node_info: Vec<NodeInfo>,
+    pub nodes: TypedVec<Node, NodeInfo>,
 
     pub inputs: Vec<Node>,
     pub outputs: Vec<Node>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Node(pub usize);
+define_typed_index!(Node);
 
 #[derive(Debug)]
 pub struct NodeInfo {
@@ -72,20 +70,17 @@ pub struct NodeInfo {
 #[derive(Debug)]
 pub struct Hardware {
     pub id: String,
-    pub mem_info: Vec<MemoryInfo>,
-    pub group_info: Vec<GroupInfo>,
-    pub channel_info: Vec<ChannelInfo>,
+    pub memories: TypedVec<Memory, MemoryInfo>,
+    pub groups: TypedVec<Group, GroupInfo>,
+    pub channels: TypedVec<Channel, ChannelInfo>,
 }
 
 // TODO rename group?
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Group(pub usize);
+define_typed_index!(Group);
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Channel(pub usize);
+define_typed_index!(Channel);
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Memory(pub usize);
+define_typed_index!(Memory);
 
 #[derive(Debug)]
 pub struct GroupInfo {
@@ -128,30 +123,26 @@ impl Problem {
         self.hardware.assert_valid();
         self.graph.assert_valid();
 
-        for alloc in &self.allocation_info {
-            assert!(alloc.group.0 < self.hardware.groups().len());
-            assert!(alloc.node.0 < self.graph.nodes().len());
-            for mem in &alloc.input_memories {
-                assert!(mem.0 < self.hardware.memories().len());
+        for (_, alloc_info) in &self.allocations {
+            assert!(self.hardware.groups.has_key(alloc_info.group));
+            assert!(self.graph.nodes.has_key(alloc_info.node));
+            for &mem in &alloc_info.input_memories {
+                assert!(self.hardware.memories.has_key(mem));
             }
-            assert!(alloc.output_memory.0 < self.hardware.memories().len());
+            assert!(self.hardware.memories.has_key(alloc_info.output_memory));
 
-            assert_eq!(alloc.input_memories.len(), self.graph.node_info[alloc.node.0].inputs.len());
+            assert_eq!(alloc_info.input_memories.len(), self.graph.nodes[alloc_info.node].inputs.len());
         }
 
         assert_eq!(self.input_placements.len(), self.graph.inputs.len());
-        for mem in &self.input_placements {
-            assert!(mem.0 < self.hardware.memories().len());
+        for &mem in &self.input_placements {
+            assert!(self.hardware.memories.has_key(mem));
         }
 
         assert_eq!(self.output_placements.len(), self.graph.outputs.len());
-        for mem in &self.output_placements {
-            assert!(mem.0 < self.hardware.memories().len());
+        for &mem in &self.output_placements {
+            assert!(self.hardware.memories.has_key(mem));
         }
-    }
-
-    pub fn allocations(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Allocation> {
-        (0..self.allocation_info.len()).map(Allocation)
     }
 
     pub fn core_connected_memories(&self) -> Vec<(HashSet<Memory>, HashSet<Memory>)> {
@@ -172,17 +163,11 @@ impl Problem {
 
 impl Graph {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), node_info: vec![], inputs: vec![], outputs: vec![] }
-    }
-
-    pub fn nodes(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Node> {
-        (0..self.node_info.len()).map(Node)
+        Self { id: id.into(), nodes: TypedVec::new(), inputs: vec![], outputs: vec![] }
     }
 
     pub fn add_node(&mut self, info: NodeInfo) -> Node {
-        let node = Node(self.node_info.len());
-        self.node_info.push(info);
-        node
+        self.nodes.push(info)
     }
 
     pub fn create_node(&mut self, id: impl Into<String>, size_bits: u64, inputs: Vec<Node>) -> Node {
@@ -195,13 +180,14 @@ impl Graph {
     }
 
     pub fn add_input(&mut self, node: Node) {
-        assert!(node.0 < self.node_info.len());
+        assert!(self.nodes.has_key(node));
+        assert!(self.nodes[node].inputs.is_empty());
         assert!(!self.inputs.contains(&node));
         self.inputs.push(node);
     }
 
     pub fn add_output(&mut self, node: Node) {
-        assert!(node.0 < self.node_info.len());
+        assert!(self.nodes.has_key(node));
         self.outputs.push(node);
     }
 
@@ -211,11 +197,11 @@ impl Graph {
         g.push(format!("label=<<B>{}</B>>", self.id));
         g.push("labelloc=t");
 
-        for (i, node) in self.nodes().enumerate() {
+        for (node, node_info) in &self.nodes {
             let mut rows = vec![
                 ("debug", format!("{:?}", node)),
-                ("id", self.node_info[node.0].id.clone()),
-                ("size_bits", self.node_info[node.0].size_bits.to_string()),
+                ("id", node_info.id.clone()),
+                ("size_bits", node_info.size_bits.to_string()),
             ];
 
             let input = self.inputs.iter().position(|&x| x == node);
@@ -228,11 +214,11 @@ impl Graph {
             }
 
             let label = GraphViz::table("Node", rows);
-            g.push(format!("node_{} [label=<{}>, shape=box, color=green]", i, label));
+            g.push(format!("node_{} [label=<{}>, shape=box, color=green]", node.0, label));
 
-            for (j, input) in self.node_info[node.0].inputs.iter().enumerate() {
-                let head = format!("node_{}", self.nodes().position(|x| x == *input).unwrap());
-                let tail = format!("node_{}", i);
+            for (j, input) in node_info.inputs.iter().enumerate() {
+                let head = format!("node_{}", self.nodes.keys().position(|x| x == *input).unwrap());
+                let tail = format!("node_{}", node.0);
                 g.push(format!("{} -> {} [headlabel={}]", head, tail, j));
             }
         }
@@ -242,45 +228,31 @@ impl Graph {
 
     pub fn assert_valid(&self) {
         // TODO assert that graph is a DAG
-        for info in &self.node_info {
-            for x in &info.inputs {
-                assert!(x.0 < self.node_info.len());
+        for (_, info) in &self.nodes {
+            for &x in &info.inputs {
+                assert!(self.nodes.has_key(x));
             }
         }
 
         assert_eq!(self.inputs.iter().unique().count(), self.inputs.len());
-        for x in &self.inputs {
-            assert!(self.node_info[x.0].inputs.is_empty());
-            assert!(x.0 < self.node_info.len());
+        for &x in &self.inputs {
+            assert!(self.nodes.has_key(x));
+            assert!(self.nodes[x].inputs.is_empty());
         }
         assert_eq!(self.inputs.iter().unique().count(), self.inputs.len());
-        for x in &self.outputs {
-            assert!(x.0 < self.node_info.len());
+        for &x in &self.outputs {
+            assert!(self.nodes.has_key(x));
         }
     }
 }
 
 impl Hardware {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), mem_info: vec![], group_info: vec![], channel_info: vec![] }
-    }
-
-    pub fn memories(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Memory> {
-        (0..self.mem_info.len()).map(Memory)
-    }
-
-    pub fn channels(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Channel> {
-        (0..self.channel_info.len()).map(Channel)
-    }
-
-    pub fn groups(&self) -> std::iter::Map<Range<usize>, fn(usize) -> Group> {
-        (0..self.group_info.len()).map(Group)
+        Self { id: id.into(), memories: TypedVec::new(), groups: TypedVec::new(), channels: TypedVec::new() }
     }
 
     pub fn add_memory(&mut self, info: MemoryInfo) -> Memory {
-        let memory = Memory(self.memories().len());
-        self.mem_info.push(info);
-        memory
+        self.memories.push(info)
     }
 
     pub fn create_memory(&mut self, id: impl Into<String>, size_bits: Option<u64>) -> Memory {
@@ -288,19 +260,15 @@ impl Hardware {
     }
 
     pub fn add_group(&mut self, info: GroupInfo) -> Group {
-        let group = Group(self.group_info.len());
-        self.group_info.push(info);
-        group
+        self.groups.push(info)
     }
 
     pub fn create_group(&mut self, id: impl Into<String>) -> Group {
         self.add_group(GroupInfo { id: id.into() })
     }
     
-    // TODO bidirectional channel utility
     pub fn add_channel(&mut self, info: ChannelInfo) -> Channel {
-        let channel = Channel(self.channel_info.len());
-        self.channel_info.push(info);
+        let channel = self.channels.push(info);
         self.assert_channel_valid(channel);
         channel
     }
@@ -337,30 +305,29 @@ impl Hardware {
         g.push(format!("label=<<B>{}</B>>", self.id));
         g.push("labelloc=t");
 
-        for mem in self.memories() {
-            let size = if let Some(size) = self.mem_info[mem.0].size_bits {
+        for (mem, mem_info) in &self.memories {
+            let size = if let Some(size) = mem_info.size_bits {
                 size.to_string()
             } else {
                 "inf".to_owned()
             };
             let rows = vec![
                 ("debug", format!("{:?}", mem)),
-                ("id", self.mem_info[mem.0].id.clone()),
+                ("id", mem_info.id.clone()),
                 ("size_bits", size),
             ];
             let label = GraphViz::table("Memory", rows);
             g.push(format!("mem_{} [label=<{}>, shape=box, color=blue]", mem.0, label));
         }
 
-        for channel in self.channels() {
-            let info = &self.channel_info[channel.0];
+        for (channel, channel_info) in &self.channels {
             let rows = vec![
                 ("debug", format!("{:?}", channel)),
-                ("id", info.id.clone()),
-                ("group", self.group_info[info.group.0].id.clone()),
-                ("latency", info.cost.latency.0.to_string()),
-                ("time_per_bit", info.cost.time_per_bit.0.to_string()),
-                ("energy_per_bit", info.cost.energy_per_bit.0.to_string()),
+                ("id", channel_info.id.clone()),
+                ("group", self.groups[channel_info.group].id.clone()),
+                ("latency", channel_info.cost.latency.0.to_string()),
+                ("time_per_bit", channel_info.cost.time_per_bit.0.to_string()),
+                ("energy_per_bit", channel_info.cost.energy_per_bit.0.to_string()),
             ];
             let mid = format!("channel_{}", channel.0);
 
@@ -368,8 +335,8 @@ impl Hardware {
             g.push(format!("{} [label=<{}>, shape=box, color=darkorange]", mid, label));
 
             // TODO fuse pairs of channels that are identical and form a group?
-            let head = format!("mem_{}", info.mem_source.0);
-            let tail = format!("mem_{}", info.mem_dest.0);
+            let head = format!("mem_{}", channel_info.mem_source.0);
+            let tail = format!("mem_{}", channel_info.mem_dest.0);
 
             let dir = "forward";
             g.push(format!("{} -> {} [dir={}, color=darkorange]", head, mid, dir));
@@ -405,15 +372,15 @@ impl Hardware {
     }
 
     fn assert_channel_valid(&self, channel: Channel) {
-        assert!(channel.0 < self.channel_info.len());
-        let channel = &self.channel_info[channel.0];
-        assert!(channel.mem_source.0 < self.memories().len());
-        assert!(channel.mem_dest.0 < self.memories().len());
+        assert!(self.channels.has_key(channel));
+        let channel_info = &self.channels[channel];
+        assert!(self.memories.has_key(channel_info.mem_source));
+        assert!(self.memories.has_key(channel_info.mem_dest));
     }
 
     pub fn assert_valid(&self) {
-        for i in 0..self.channel_info.len() {
-            self.assert_channel_valid(Channel(i));
+        for channel in self.channels.keys() {
+            self.assert_channel_valid(channel);
         }
     }
 }

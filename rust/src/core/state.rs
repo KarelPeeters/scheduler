@@ -7,7 +7,7 @@ use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
 use crate::core::problem::{Allocation, Channel, CostTarget, Group, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
-use crate::core::wrapper::{Energy, Time};
+use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::dom_early_check;
 
 #[derive(Clone)]
@@ -20,22 +20,24 @@ pub struct State {
     pub curr_energy: Energy,
     pub minimum_time: Time,
 
-    pub state_group: Vec<Option<GroupClaim>>,
-    pub state_memory_node: Vec<HashMap<Node, ValueState>>,
-    pub value_live_count: Vec<usize>,
+    pub state_group: TypedVec<Group, Option<GroupClaim>>,
+    // TODO replace hashmap with typedvec? it's usually sparse though
+    pub state_memory_node: TypedVec<Memory, HashMap<Node, ValueState>>,
+    pub value_live_count: TypedVec<Node, usize>,
 
     pub unstarted_nodes: HashSet<Node>,
-    pub value_remaining_unstarted_uses: Vec<u32>,
+    pub value_remaining_unstarted_uses: TypedVec<Node, u32>,
 
     // triggers
+    // TODO cleanup and combine structures with the same keys?
     pub trigger_everything: bool,
-    pub trigger_group_free: Vec<bool>,
-    pub trigger_value_mem_available: Vec<Vec<bool>>,
+    pub trigger_group_free: TypedVec<Group, bool>,
+    pub trigger_value_mem_available: TypedVec<Node, TypedVec<Memory, bool>>,
     // TODO set to false again for dead values? 
-    pub trigger_value_mem_unlocked_or_read: Vec<Vec<bool>>,
+    pub trigger_value_mem_unlocked_or_read: TypedVec<Node, TypedVec<Memory, bool>>,
     // TODO don't track this for inf-sized memories?
-    pub trigger_mem_usage_decreased: Vec<Option<(u64, u64)>>,
-    pub trigger_value_live_count_increased: Vec<bool>,
+    pub trigger_mem_usage_decreased: TypedVec<Memory, Option<(u64, u64)>>,
+    pub trigger_value_live_count_increased: TypedVec<Node, bool>,
 
     // filtering (attempt -> most recent time range)
     pub tried_allocs: HashMap<Allocation, TimeRange>,
@@ -84,31 +86,27 @@ impl State {
         let graph = &problem.graph;
         let hardware = &problem.hardware;
 
-        let node_count = graph.nodes().len();
-        let mem_count = hardware.memories().len();
-        let group_count = hardware.groups().len();
-
         // precompute
-        let unstarted_nodes = graph.nodes().filter(|n| !graph.inputs.contains(n)).collect();
+        let unstarted_nodes = graph.nodes.keys().filter(|n| !graph.inputs.contains(n)).collect();
 
-        let mut value_remaining_unstarted_uses = vec![0; node_count];
-        for node in graph.nodes() {
-            for x in &graph.node_info[node.0].inputs {
-                value_remaining_unstarted_uses[x.0] += 1;
+        let mut value_remaining_unstarted_uses = TypedVec::full_like(0, &graph.nodes);
+        for node_info in graph.nodes.values() {
+            for &x in &node_info.inputs {
+                value_remaining_unstarted_uses[x] += 1;
             }
         }
-        for x in &graph.outputs {
-            value_remaining_unstarted_uses[x.0] += 1;
+        for &x in &graph.outputs {
+            value_remaining_unstarted_uses[x] += 1;
         }
 
-        let mut state_memory_node = vec![HashMap::new(); mem_count];
-        let mut value_live_count = vec![0; node_count];
+        let mut state_memory_node = TypedVec::full_like(HashMap::new(), &hardware.memories);
+        let mut value_live_count = TypedVec::full_like(0, &graph.nodes);
 
         for (&value, &mem) in zip_eq(&graph.inputs, &problem.input_placements) {
             let state = ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: Time(0) };
-            let prev = state_memory_node[mem.0].insert(value, state);
+            let prev = state_memory_node[mem].insert(value, state);
             assert!(prev.is_none());
-            value_live_count[value.0] += 1;
+            value_live_count[value] += 1;
         }
 
         // construct
@@ -117,17 +115,17 @@ impl State {
             curr_time: Time(0),
             curr_energy: Energy(0),
             minimum_time: Time(0),
-            state_group: vec![None; group_count],
+            state_group: TypedVec::full_like(None, &hardware.groups),
             state_memory_node,
             value_live_count,
             unstarted_nodes,
             value_remaining_unstarted_uses,
             trigger_everything: true,
-            trigger_group_free: vec![false; group_count],
-            trigger_value_mem_available: vec![vec![false; mem_count]; node_count],
-            trigger_value_mem_unlocked_or_read: vec![vec![false; mem_count]; node_count],
-            trigger_mem_usage_decreased: vec![None; mem_count],
-            trigger_value_live_count_increased: vec![false; node_count],
+            trigger_group_free: TypedVec::full_like(false, &hardware.groups),
+            trigger_value_mem_available: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
+            trigger_value_mem_unlocked_or_read: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
+            trigger_mem_usage_decreased: TypedVec::full_like(None, &hardware.memories),
+            trigger_value_live_count_increased: TypedVec::full_like(false, &graph.nodes),
             tried_allocs: HashMap::new(),
             tried_transfers: HashMap::new(),
         }
@@ -138,45 +136,40 @@ impl State {
         let graph = &problem.graph;
         let hardware = &problem.hardware;
 
-        // let node_count = graph.nodes().len();
-        let mem_count = hardware.memories().len();
-        // let channel_count = hardware.channels().len();
-        // let core_count = hardware.cores().len();
-
         // checks
-        let mut expected_state_memory_read_lock_count = vec![HashMap::new(); mem_count];
-        let mut expected_value_live_count = vec![0; graph.nodes().len()];
+        let mut expected_state_memory_read_lock_count = TypedVec::full_like(HashMap::new(), &hardware.memories);
+        let mut expected_value_live_count = TypedVec::full_like(0, &graph.nodes);
 
-        for state in &self.state_group {
+        for (_, state) in &self.state_group {
             match state {
                 None => {},
                 Some(GroupClaim::Core(state)) => {
-                    let alloc = &problem.allocation_info[state.alloc.0];
-                    for (&input, &mem) in zip_eq(&graph.node_info[alloc.node.0].inputs, &alloc.input_memories) {
-                        *expected_state_memory_read_lock_count[mem.0].entry(input).or_insert(0) += 1;
+                    let alloc = &problem.allocations[state.alloc];
+                    for (&input, &mem) in zip_eq(&graph.nodes[alloc.node].inputs, &alloc.input_memories) {
+                        *expected_state_memory_read_lock_count[mem].entry(input).or_insert(0) += 1;
                     }
-                    assert_eq!(self.state_memory_node[alloc.output_memory.0].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time.end));
+                    assert_eq!(self.state_memory_node[alloc.output_memory].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time.end));
                 }
                 Some(GroupClaim::Channel(state)) => {
-                    let channel_info = &problem.hardware.channel_info[state.channel.0];
-                    *expected_state_memory_read_lock_count[channel_info.mem_source.0].entry(state.value).or_insert(0) += 1;
-                    assert_eq!(self.state_memory_node[channel_info.mem_dest.0].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time.end));
+                    let channel_info = &problem.hardware.channels[state.channel];
+                    *expected_state_memory_read_lock_count[channel_info.mem_source].entry(state.value).or_insert(0) += 1;
+                    assert_eq!(self.state_memory_node[channel_info.mem_dest].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time.end));
                 }
             }
         }
 
-        for mem in hardware.memories() {
-            let expected = &expected_state_memory_read_lock_count[mem.0];
-            let actual = &self.state_memory_node[mem.0];
+        for mem in hardware.memories.keys() {
+            let expected = &expected_state_memory_read_lock_count[mem];
+            let actual = &self.state_memory_node[mem];
 
-            for (node, &node_actual) in actual {
-                expected_value_live_count[node.0] += 1;
+            for (&node, &node_actual) in actual {
+                expected_value_live_count[node] += 1;
 
                 match node_actual {
                     ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
-                        assert_eq!(expected.get(node).copied().unwrap_or(0), read_lock_count)
+                        assert_eq!(expected.get(&node).copied().unwrap_or(0), read_lock_count)
                     }
-                    ValueState::AvailableAtTime(_) => assert!(!expected.contains_key(node)),
+                    ValueState::AvailableAtTime(_) => assert!(!expected.contains_key(&node)),
                 }
             }
 
@@ -196,14 +189,14 @@ impl State {
     pub fn estimate_final_cost_conservative(&self, problem: &Problem) -> Cost {
         // TODO precompute these values for each node
         let min_additional_energy = self.unstarted_nodes.iter().map(|node| {
-            problem.allocation_info.iter()
+            problem.allocations.values()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.energy)
                 .min().unwrap()
         }).sum::<Energy>();
 
         let min_additional_time = self.unstarted_nodes.iter().map(|node| {
-            problem.allocation_info.iter()
+            problem.allocations.values()
                 .filter(|alloc| alloc.node == *node)
                 .map(|alloc| alloc.time)
                 .min().unwrap()
@@ -217,7 +210,7 @@ impl State {
 
     // TODO use this function in a bunch more places
     pub fn value_mem_availability(&self, value: Node, mem: Memory) -> Option<ValueState> {
-        self.state_memory_node[mem.0].get(&value).copied()
+        self.state_memory_node[mem].get(&value).copied()
     }
 
     pub fn value_available_in_mem_now(&self, value: Node, mem: Memory, since_max: Option<Time>) -> bool {
@@ -244,7 +237,7 @@ impl State {
     }
 
     pub fn is_idle(&self) -> bool {
-        self.state_group.iter().all(|s| s.is_none())
+        self.state_group.values().all(|s| s.is_none())
     }
 
     pub fn is_done(&self, problem: &Problem) -> bool {
@@ -260,11 +253,11 @@ impl State {
 
     pub fn mem_space_used(&self, problem: &Problem, mem: Memory) -> u64 {
         // TODO update incrementally
-        let used = self.state_memory_node[mem.0].iter()
-            .map(|(&value, _)| problem.graph.node_info[value.0].size_bits)
+        let used = self.state_memory_node[mem].iter()
+            .map(|(&value, _)| problem.graph.nodes[value].size_bits)
             .sum();
 
-        if let Some(mem_size_bits) = problem.hardware.mem_info[mem.0].size_bits {
+        if let Some(mem_size_bits) = problem.hardware.memories[mem].size_bits {
             assert!(used <= mem_size_bits);
         }
 
@@ -280,7 +273,7 @@ impl State {
     }
 
     pub fn first_done_time(&self) -> Option<Time> {
-        self.state_group.iter().filter_map(|a| a.map(|a| a.time().end)).min()
+        self.state_group.values().filter_map(|a| a.map(|a| a.time().end)).min()
     }
 
     #[must_use]
@@ -293,14 +286,14 @@ impl State {
     pub fn clear_triggers(&mut self) {
         self.trigger_everything = false;
         self.trigger_group_free.fill(false);
-        self.trigger_value_mem_available.iter_mut().for_each(|x| x.fill(false));
-        self.trigger_value_mem_unlocked_or_read.iter_mut().for_each(|x| x.fill(false));
+        self.trigger_value_mem_available.values_mut().for_each(|x| x.fill(false));
+        self.trigger_value_mem_unlocked_or_read.values_mut().for_each(|x| x.fill(false));
         self.trigger_mem_usage_decreased.fill(None);
         self.trigger_value_live_count_increased.fill(false);
     }
 
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
-        let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
+        let availability = self.state_memory_node[mem].get_mut(&value).unwrap();
 
         match availability {
             ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
@@ -309,7 +302,7 @@ impl State {
 
                 if *read_count == 1 {
                     // this is not really useful (since it's locked anyway) but just for completeness
-                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
+                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
                 }
             }
             ValueState::AvailableAtTime(_) => panic!(),
@@ -317,13 +310,13 @@ impl State {
     }
 
     fn release_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
-        let availability = self.state_memory_node[mem.0].get_mut(&value).unwrap();
+        let availability = self.state_memory_node[mem].get_mut(&value).unwrap();
         match availability {
             ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
                 if *read_lock_count == 0 {
-                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
+                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
                 }
             }
             ValueState::AvailableAtTime(_) => panic!(),
@@ -331,25 +324,25 @@ impl State {
     }
 
     fn mark_mem_value_available(&mut self, value: Node, mem: Memory, availability: ValueState) {
-        let prev = self.state_memory_node[mem.0].insert(value, availability);
+        let prev = self.state_memory_node[mem].insert(value, availability);
 
         match availability {
             ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
                 assert!(matches!(prev, Some(ValueState::AvailableAtTime(_))));
 
-                let trigger = &mut self.trigger_value_mem_available[value.0][mem.0];
+                let trigger = &mut self.trigger_value_mem_available[value][mem];
                 assert!(!*trigger);
                 *trigger = true;
 
                 if read_lock_count == 0 || read_count > 0 {
-                    self.trigger_value_mem_unlocked_or_read[value.0][mem.0] = true;
+                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
                 }
             }
             ValueState::AvailableAtTime(_) => {
                 assert_eq!(prev, None, "Value {value:?} in mem {mem:?} already has availability, trying to insert {availability:?}");
 
-                self.value_live_count[value.0] += 1;
-                self.trigger_value_live_count_increased[value.0];
+                self.value_live_count[value] += 1;
+                self.trigger_value_live_count_increased[value];
             }
         }
     }
@@ -357,24 +350,24 @@ impl State {
     pub fn drop_value(&mut self, problem: &Problem, mem: Memory, value: Node) {
         // get value before removal
         let mem_space_used_before = self.mem_space_used(problem, mem);
-        let value_size_bits = problem.graph.node_info[value.0].size_bits;
+        let value_size_bits = problem.graph.nodes[value].size_bits;
 
-        let mem_size_bits = problem.hardware.mem_info[mem.0].size_bits;
+        let mem_size_bits = problem.hardware.memories[mem].size_bits;
         if let Some(mem_size_bits) = mem_size_bits {
             assert!(mem_space_used_before <= mem_size_bits);
         }
 
         // remove
-        let prev = self.state_memory_node[mem.0].remove(&value);
+        let prev = self.state_memory_node[mem].remove(&value);
         assert!(matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _, since: _ })));
         assert!(prev.is_some());
 
-        let live_count = &mut self.value_live_count[value.0];
+        let live_count = &mut self.value_live_count[value];
         assert!(*live_count > 0);
         *live_count -= 1;
 
         // update memory usage trigger
-        let slot = &mut self.trigger_mem_usage_decreased[mem.0];
+        let slot = &mut self.trigger_mem_usage_decreased[mem];
         if let Some((_, slot_after)) = slot {
             // further decrease memory used
             *slot_after = min(*slot_after, mem_space_used_before - value_size_bits);
@@ -392,17 +385,17 @@ impl State {
     }
 
     fn claim_group(&mut self, group: Group, claim: GroupClaim) {
-        let state = &mut self.state_group[group.0];
+        let state = &mut self.state_group[group];
         assert!(state.is_none());
         *state = Some(claim);
     }
 
     fn release_group(&mut self, group: Group) {
-        let state = &mut self.state_group[group.0];
+        let state = &mut self.state_group[group];
         assert!(state.is_some());
         *state = None;
 
-        let trigger = &mut self.trigger_group_free[group.0];
+        let trigger = &mut self.trigger_group_free[group];
         assert!(!*trigger);
         *trigger = true;
     }
@@ -422,8 +415,8 @@ impl State {
         let mut symmetry_break = false;
 
         // complete operations
-        for group in problem.hardware.groups() {
-            if let Some(action) = self.state_group[group.0] {
+        for group in problem.hardware.groups.keys() {
+            if let Some(action) = self.state_group[group] {
                 if action.time().end > time_end {
                     // not done yet
                     continue
@@ -431,8 +424,8 @@ impl State {
 
                 match action {
                     GroupClaim::Core(action) => {
-                        let alloc_info = &problem.allocation_info[action.alloc.0];
-                        for (&input_value, &input_mem) in zip_eq(&problem.graph.node_info[alloc_info.node.0].inputs, &alloc_info.input_memories) {
+                        let alloc_info = &problem.allocations[action.alloc];
+                        for (&input_value, &input_mem) in zip_eq(&problem.graph.nodes[alloc_info.node].inputs, &alloc_info.input_memories) {
                             self.release_mem_value_read_lock(input_value, input_mem);
                         }
                         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
@@ -441,7 +434,7 @@ impl State {
                         if !symmetry_break {
                             for &other_action in &self.actions_taken {
                                 if let Action::Core(other_action) = other_action {
-                                    if action.alloc.0 < other_action.alloc.0 && self.could_swap_core_actions(problem, action, other_action) {
+                                    if action.alloc < other_action.alloc && self.could_swap_core_actions(problem, action, other_action) {
                                         symmetry_break = true;
                                         break;
                                     }
@@ -450,7 +443,7 @@ impl State {
                         }
                     }
                     GroupClaim::Channel(action) => {
-                        let channel_info = &problem.hardware.channel_info[action.channel.0];
+                        let channel_info = &problem.hardware.channels[action.channel];
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
 
@@ -470,8 +463,8 @@ impl State {
     }
 
     fn could_swap_core_actions(&self, problem: &Problem, curr_action: ActionCore, other_action: ActionCore) -> bool {
-        let curr_info = &problem.allocation_info[curr_action.alloc.0];
-        let other_info = &problem.allocation_info[other_action.alloc.0];
+        let curr_info = &problem.allocations[curr_action.alloc];
+        let other_info = &problem.allocations[other_action.alloc];
 
         // things to check:
         // * inputs of the earlier node are still available (tricky, they've probably been deleted because they're dead)
@@ -490,11 +483,11 @@ impl State {
             Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
         );
 
-        let other_has_operands_now = problem.graph.node_info[other_info.node.0].inputs.iter().enumerate().all(|(i, &other_input)| {
+        let other_has_operands_now = problem.graph.nodes[other_info.node].inputs.iter().enumerate().all(|(i, &other_input)| {
             self.value_available_in_mem_now(other_input, other_info.input_memories[i], Some(self.curr_time - other_info.time))
         });
 
-        let curr_has_operands_earlier = problem.graph.node_info[other_info.node.0].inputs.iter().enumerate().all(|(i, &curr_input)| {
+        let curr_has_operands_earlier = problem.graph.nodes[other_info.node].inputs.iter().enumerate().all(|(i, &curr_input)| {
             // TODO this is too strict, we don't need them to still be available now, just for the previous time range
             self.value_available_in_mem_now(curr_input, curr_info.input_memories[i], Some(other_action.time.end - curr_info.time))
         });
@@ -508,22 +501,22 @@ impl State {
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
-        for mem in problem.hardware.memories() {
+        for (mem, mem_info) in &problem.hardware.memories {
             // don't drop dead values in inf sized memories
             // * it's useless anyway
             // * this makes value liveness checking for past time ranges easier
-            if problem.hardware.mem_info[mem.0].size_bits.is_none() {
+            if mem_info.size_bits.is_none() {
                 continue;
             }
 
             let used_before = self.mem_space_used(problem, mem);
 
-            let mem_content = &mut self.state_memory_node[mem.0];
+            let mem_content = &mut self.state_memory_node[mem];
             let mut exit = false;
 
             mem_content.retain(|&value, &mut availability| {
                 if let ValueState::AvailableNow { read_lock_count, read_count, since: _ } = availability {
-                    let dead = self.value_remaining_unstarted_uses[value.0] == 0;
+                    let dead = self.value_remaining_unstarted_uses[value] == 0;
 
                     if read_lock_count > 0 || !dead {
                         // not (really) dead, keep
@@ -544,7 +537,7 @@ impl State {
                         mem,
                     }));
 
-                    let live_count = &mut self.value_live_count[value.0];
+                    let live_count = &mut self.value_live_count[value];
                     assert!(*live_count > 0);
                     *live_count -= 1;
 
@@ -562,7 +555,7 @@ impl State {
             if used_before != used_after {
                 assert!(used_after < used_before);
 
-                let slot = &mut self.trigger_mem_usage_decreased[mem.0];
+                let slot = &mut self.trigger_mem_usage_decreased[mem];
                 let new = (used_before, used_after);
 
                 match slot {
@@ -580,8 +573,8 @@ impl State {
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
-        let alloc_info = &problem.allocation_info[alloc.0];
-        let node_info = &problem.graph.node_info[alloc_info.node.0];
+        let alloc_info = &problem.allocations[alloc];
+        let node_info = &problem.graph.nodes[alloc_info.node];
 
         // metadata
         let time_delta = alloc_info.time;
@@ -597,7 +590,7 @@ impl State {
         // real changes
         assert!(self.unstarted_nodes.remove(&alloc_info.node));
         for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
-            let uses = &mut self.value_remaining_unstarted_uses[input_value.0];
+            let uses = &mut self.value_remaining_unstarted_uses[input_value];
             assert!(*uses >= 1);
             *uses -= 1;
 
@@ -612,12 +605,12 @@ impl State {
     }
 
     pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node) -> TimeRange {
-        let channel_info = &problem.hardware.channel_info[channel.0];
+        let channel_info = &problem.hardware.channels[channel];
 
         assert!(self.value_mem_availability(value, channel_info.mem_dest).is_none());
 
         // metadata
-        let size_bits = problem.graph.node_info[value.0].size_bits;
+        let size_bits = problem.graph.nodes[value].size_bits;
         let time_delta = channel_info.cost.time_to_transfer(size_bits);
         let energy_delta = channel_info.cost.energy_to_transfer(size_bits);
 
@@ -653,13 +646,13 @@ impl State {
         let mut tried_transfers = std::mem::take(&mut self.tried_transfers);
         tried_transfers.retain(|&(channel, node), &mut time| {
             // dead
-            if self.value_remaining_unstarted_uses[node.0] == 0 {
+            if self.value_remaining_unstarted_uses[node] == 0 {
                 return false;
             }
 
             // overlap
-            let channel_info = &problem.hardware.channel_info[channel.0];
-            if let Some(claim) = self.state_group[channel_info.group.0] {
+            let channel_info = &problem.hardware.channels[channel];
+            if let Some(claim) = self.state_group[channel_info.group] {
                 if claim.time().overlaps(time) {
                     return false;
                 }
@@ -668,7 +661,7 @@ impl State {
             // fit
             {
                 let mut dummy = self.new_trigger();
-                if !dummy.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.node_info[node.0].size_bits) {
+                if !dummy.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.nodes[node].size_bits) {
                     return false;
                 }
             }
@@ -681,7 +674,7 @@ impl State {
 
         let mut tried_allocs = std::mem::take(&mut self.tried_allocs);
         tried_allocs.retain(|&alloc, &mut time| {
-            let alloc_info = &problem.allocation_info[alloc.0];
+            let alloc_info = &problem.allocations[alloc];
 
             // dead
             if !self.unstarted_nodes.contains(&alloc_info.node) {
@@ -689,7 +682,7 @@ impl State {
             }
 
             // overlap
-            if let Some(claim) = self.state_group[alloc_info.group.0] {
+            if let Some(claim) = self.state_group[alloc_info.group] {
                 if claim.time().overlaps(time) {
                     return false;
                 }
@@ -698,7 +691,7 @@ impl State {
             // fit
             {
                 let mut dummy = self.new_trigger();
-                if !dummy.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.node_info[alloc_info.node.0].size_bits) {
+                if !dummy.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.nodes[alloc_info.node].size_bits) {
                     return false;
                 }
             }
@@ -711,7 +704,7 @@ impl State {
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {
-        if self.value_remaining_unstarted_uses[value.0] == 0 {
+        if self.value_remaining_unstarted_uses[value] == 0 {
             // dead, best possible case
             return i64::MIN;
         }
@@ -775,8 +768,8 @@ impl State {
         }
 
         // group availability
-        for group in problem.hardware.groups() {
-            let v = match self.state_group[group.0] {
+        for group in problem.hardware.groups.keys() {
+            let v = match self.state_group[group] {
                 // TODO go back to using current time here? that fails with actions that take zero time
                 None => i64::MIN,
                 Some(action) => (action.time().end - self.curr_time).0,
@@ -786,15 +779,15 @@ impl State {
 
         // value availability
         // TODO we should be able to fully skip this during comparisons if the value states don't match
-        for mem in problem.hardware.memories() {
-            for value in problem.graph.nodes() {
+        for mem in problem.hardware.memories.keys() {
+            for value in problem.graph.nodes.keys() {
                 key.push(next_index(), self.value_mem_dom_key_min(value, mem));
             }
         }
 
         // memory space (less used is better for memories with limited size)
-        for mem in problem.hardware.memories() {
-            if problem.hardware.mem_info[mem.0].size_bits.is_some() {
+        for (mem, mem_info) in &problem.hardware.memories {
+            if mem_info.size_bits.is_some() {
                 key.push(next_index(), self.mem_space_used(problem, mem) as i64);
             }
         }
@@ -814,14 +807,14 @@ impl Trigger<'_> {
     #[must_use]
     pub fn check_group_free(&mut self, group: Group) -> bool {
         self.result(
-            self.state.state_group[group.0].is_none(),
-            self.state.trigger_group_free[group.0],
+            self.state.state_group[group].is_none(),
+            self.state.trigger_group_free[group],
         )
     }
 
     #[must_use]
     pub fn check_mem_space_available(&mut self, problem: &Problem, mem: Memory, size_bits: u64) -> bool {
-        let mem_size = problem.hardware.mem_info[mem.0].size_bits;
+        let mem_size = problem.hardware.memories[mem].size_bits;
 
         match mem_size {
             None => {
@@ -836,7 +829,7 @@ impl Trigger<'_> {
                 let fits = used + size_bits <= mem_size;
 
                 // trigger if fit changed
-                let triggered = if let Some((before, after)) = self.state.trigger_mem_usage_decreased[mem.0] {
+                let triggered = if let Some((before, after)) = self.state.trigger_mem_usage_decreased[mem] {
                     let fit_before = before + size_bits <= mem_size;
                     let fit_after = after + size_bits <= mem_size;
                     fit_after && !fit_before
@@ -853,7 +846,7 @@ impl Trigger<'_> {
     pub fn check_mem_value_available(&mut self, mem: Memory, value: Node) -> bool {
         self.result(
             self.state.value_available_in_mem_now(value, mem, None),
-            self.state.trigger_value_mem_available[value.0][mem.0],
+            self.state.trigger_value_mem_available[value][mem],
         )
     }
 
@@ -876,15 +869,15 @@ impl Trigger<'_> {
         };
         self.result(
             valid,
-            self.state.trigger_value_mem_unlocked_or_read[value.0][mem.0],
+            self.state.trigger_value_mem_unlocked_or_read[value][mem],
         )
     }
 
     #[must_use]
     pub fn check_not_single_live_instance(&mut self, value: Node) -> bool {
-        let live_count = self.state.value_live_count[value.0];
+        let live_count = self.state.value_live_count[value];
         assert!(live_count > 0);
-        self.result(live_count > 1, self.state.trigger_value_live_count_increased[value.0])
+        self.result(live_count > 1, self.state.trigger_value_live_count_increased[value])
     }
 
     #[must_use]

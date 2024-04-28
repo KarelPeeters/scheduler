@@ -19,21 +19,21 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
     // TODO only drop dead values if necessary for the actions that are starting at the current time?
     //   this can be implemented as a prune at the start of wait for simplicity
     //   (prune if more space than necessary was created)
-    for mem in problem.hardware.memories() {
+    for (mem, mem_info) in &problem.hardware.memories {
         // memory has unlimited size, no point in ever dropping things
-        if problem.hardware.mem_info[mem.0].size_bits.is_none() {
+        if mem_info.size_bits.is_none() {
             continue;
         }
         expand_try_drop(problem, &state, next, mem);
     }
 
     // maybe start core operations
-    for alloc in problem.allocations() {
+    for alloc in problem.allocations.keys() {
         expand_try_alloc(problem, &mut state, next, alloc);
     }
 
     // maybe start channel operations
-    for channel in problem.hardware.channels() {
+    for channel in problem.hardware.channels.keys() {
         expand_try_channel(problem, &mut state, next, channel);
     }
 
@@ -54,8 +54,8 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
 #[inline(never)]
 fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?
-    for value in problem.graph.nodes() {
-        match state.state_memory_node[mem.0].get(&value) {
+    for value in problem.graph.nodes.keys() {
+        match state.state_memory_node[mem].get(&value) {
             // can't drop value that's not even available
             None | Some(ValueState::AvailableAtTime(_)) => {
                 continue;
@@ -65,7 +65,7 @@ fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State
 
                 if read_lock_count == 0 {
                     // TODO instead of this assert, prune states with dead values that are still being copied or calculated
-                    assert!(state.value_remaining_unstarted_uses[value.0] > 0, "dead values should have been dropped already");
+                    assert!(state.value_remaining_unstarted_uses[value] > 0, "dead values should have been dropped already");
                 }
 
                 // can't drop value that's locked, and
@@ -96,9 +96,9 @@ fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State
 #[inline(never)]
 fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), alloc: Allocation) {
     // aliases
-    let alloc_info = &problem.allocation_info[alloc.0];
+    let alloc_info = &problem.allocations[alloc];
     let node = alloc_info.node;
-    let node_info = &problem.graph.node_info[node.0];
+    let node_info = &problem.graph.nodes[node];
 
     // basic checks
     if state.tried_allocs.contains_key(&alloc) {
@@ -140,16 +140,16 @@ fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(
 #[inline(never)]
 fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel) {
     // aliases
-    let channel_info = &problem.hardware.channel_info[channel.0];
+    let channel_info = &problem.hardware.channels[channel];
 
     // check that channel is actually free before going through the following loops
-    if state.state_group[channel_info.group.0].is_some() {
+    if state.state_group[channel_info.group].is_some() {
         return;
     }
 
     // TODO switch to indexmap for deterministic iteration order?
-    for value in problem.graph.nodes() {
-        if state.state_memory_node[channel_info.mem_source.0].contains_key(&value) {
+    for value in problem.graph.nodes.keys() {
+        if state.state_memory_node[channel_info.mem_source].contains_key(&value) {
             expand_try_channel_transfer(problem, state, next, channel, value);
         }
     }
@@ -158,8 +158,8 @@ fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMu
 #[inline(never)]
 fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel, value: Node) {
     // aliases
-    let value_info = &problem.graph.node_info[value.0];
-    let channel_info = &problem.hardware.channel_info[channel.0];
+    let value_info = &problem.graph.nodes[value];
+    let channel_info = &problem.hardware.channels[channel];
 
     // basic checks
     let tried_key = (channel, value);
@@ -167,7 +167,7 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
         return;
     }
     // don't bother copying dead values around
-    if state.value_remaining_unstarted_uses[value.0] == 0 {
+    if state.value_remaining_unstarted_uses[value] == 0 {
         return;
     }
 

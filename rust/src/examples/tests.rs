@@ -3,7 +3,7 @@ use itertools::Itertools;
 use crate::core::problem::{ChannelCost, CostTarget, Graph, Hardware, Problem};
 use crate::core::solve::{DummyReporter, SolveMethod};
 use crate::core::state::Cost;
-use crate::core::wrapper::{Energy, Time};
+use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
 
@@ -13,7 +13,7 @@ fn empty() {
         id: "empty".to_string(),
         hardware: Hardware::new("hardware"),
         graph: Graph::new("graph"),
-        allocation_info: vec![],
+        allocations: TypedVec::new(),
         input_placements: vec![],
         output_placements: vec![],
     };

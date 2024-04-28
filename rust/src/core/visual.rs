@@ -1,4 +1,3 @@
-use std::convert::identity;
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -10,14 +9,14 @@ use crate::core::frontier::Frontier;
 use crate::core::problem::{Memory, Problem};
 use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
-use crate::core::wrapper::Time;
+use crate::core::wrapper::{Time, TypedIndex, TypedVec};
 
 impl State {
     pub fn write_svg_to<F: Write>(&self, problem: &Problem, mut f: F) -> std::io::Result<()> {
         let hardware = &problem.hardware;
         let graph = &problem.graph;
 
-        let row_count = hardware.groups().len() + hardware.memories().len();
+        let row_count = hardware.groups.len() + hardware.memories.len();
         let time_max = self.minimum_time.0 as f64;
 
         let row_height = 70.0;
@@ -55,9 +54,8 @@ impl State {
         )?;
 
         // vertical labels and lines
-        for group in hardware.groups() {
-            let group_info = &hardware.group_info[group.0];
-            let y = row_to_y(group.0);
+        for (group, group_info) in &hardware.groups {
+            let y = row_to_y(group.to_index());
             writeln!(
                 f,
                 "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
@@ -66,7 +64,7 @@ impl State {
                 t = group_info.id,
             )?;
 
-            if group.0 != 0 {
+            if group.to_index() != 0 {
                 writeln!(
                     f,
                     "<line x1='{x1}' y1='{y}' x2='{x2}' y2='{y}' stroke='grey' />",
@@ -133,30 +131,30 @@ impl State {
                     // don't draw anything
                 }
                 Action::Core(action) => {
-                    let alloc_info = &problem.allocation_info[action.alloc.0];
-                    let node_info = &graph.node_info[alloc_info.node.0];
+                    let alloc_info = &problem.allocations[action.alloc];
+                    let node_info = &graph.nodes[alloc_info.node];
 
-                    let row = alloc_info.group.0;
-                    let text = format!("#{} {} {}", action.alloc.0, node_info.id, alloc_info.id);
+                    let row = alloc_info.group.to_index();
+                    let text = format!("#{} {} {}", action.alloc.to_index(), node_info.id, alloc_info.id);
                     rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "green", &text)?;
                 }
                 Action::Channel(action) => {
-                    let channel_info = &hardware.channel_info[action.channel.0];
-                    let node_info = &graph.node_info[action.value.0];
+                    let channel_info = &hardware.channels[action.channel];
+                    let node_info = &graph.nodes[action.value];
 
-                    let row = channel_info.group.0;
+                    let row = channel_info.group.to_index();
                     rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "darkorange", &node_info.id)?;
                 }
             }
         }
 
         // collect memory plot info
-        let mut mem_time_bits_used = vec![vec![(0.0, 0)]; hardware.memories().len()];
-        for (node, mem) in zip_eq(&graph.inputs, &problem.input_placements) {
-            mem_time_bits_used[mem.0][0].1 += graph.node_info[node.0].size_bits;
+        let mut mem_time_bits_used = TypedVec::full_like(vec![(0.0, 0)], &hardware.memories);
+        for (&node, &mem) in zip_eq(&graph.inputs, &problem.input_placements) {
+            mem_time_bits_used[mem][0].1 += graph.nodes[node].size_bits;
         }
         let mut add_size_delta = |mem: Memory, time: Time, delta: i64| {
-            let vec = &mut mem_time_bits_used[mem.0];
+            let vec = &mut mem_time_bits_used[mem];
             let &(_, prev_used) = vec.last().unwrap();
             vec.push((time.0 as f64, prev_used));
             vec.push((time.0 as f64, prev_used.checked_add_signed(delta).unwrap()));
@@ -167,31 +165,30 @@ impl State {
                     // no memory implications
                 }
                 Action::Core(action) => {
-                    let alloc_info = &problem.allocation_info[action.alloc.0];
-                    let node_info = &graph.node_info[alloc_info.node.0];
+                    let alloc_info = &problem.allocations[action.alloc];
+                    let node_info = &graph.nodes[alloc_info.node];
                     add_size_delta(alloc_info.output_memory, action.time.start, node_info.size_bits as i64);
                 }
                 Action::Channel(action) => {
-                    let channel_info = &hardware.channel_info[action.channel.0];
-                    let node_info = &graph.node_info[action.value.0];
+                    let channel_info = &hardware.channels[action.channel];
+                    let node_info = &graph.nodes[action.value];
                     add_size_delta(channel_info.mem_dest, action.time.start, node_info.size_bits as i64);
                 }
                 Action::Drop(action) => {
-                    let node_info = &graph.node_info[action.value.0];
+                    let node_info = &graph.nodes[action.value];
                     add_size_delta(action.mem, action.time, -(node_info.size_bits as i64));
                 }
             }
         }
-        for mem in hardware.memories() {
+        for mem in hardware.memories.keys() {
             add_size_delta(mem, self.minimum_time, 0);
         }
 
         // draw memory plots
-        for mem in hardware.memories() {
-            let mem_info = &hardware.mem_info[mem.0];
-            let y = row_to_y(mem.0 + hardware.groups().len());
+        for (mem, mem_info) in &hardware.memories {
+            let y = row_to_y(mem.to_index() + hardware.groups.len());
 
-            let history = &mem_time_bits_used[mem.0];
+            let history = &mem_time_bits_used[mem];
             let max_bits = history.iter().map(|&(_, b)| b).max().unwrap_or(1);
             let mut plot_limit = mem_info.size_bits.unwrap_or(max_bits);
             if plot_limit == 0 {
@@ -275,14 +272,13 @@ impl State {
             writeln!(f)?;
 
             writeln!(f, "Memory:")?;
-            for mem in hardware.memories() {
-                let info = &hardware.mem_info[mem.0];
-                writeln!(f, "  memory '{}': used {}/{:?}", &info.id, s.mem_space_used(problem, mem), info.size_bits)?;
+            for (mem, mem_info) in &hardware.memories {
+                writeln!(f, "  memory '{}': used {}/{:?}", &mem_info.id, s.mem_space_used(problem, mem), mem_info.size_bits)?;
 
                 // iterate ourselves to keep order
-                for value in graph.nodes() {
-                    if let Some(state) = s.state_memory_node[mem.0].get(&value) {
-                        let value_info = &graph.node_info[value.0];
+                for value in graph.nodes.keys() {
+                    if let Some(state) = s.state_memory_node[mem].get(&value) {
+                        let value_info = &graph.nodes[value];
                         writeln!(f, "    contains '{}' with size {}, state {:?}", value_info.id, value_info.size_bits, state)?;
                     }
                 }
@@ -292,40 +288,40 @@ impl State {
             writeln!(f, "Triggers:")?;
             writeln!(f, "  everything: {}", s.trigger_everything)?;
 
-            let trigger_group_free_str = s.trigger_group_free.iter().copied().positions(identity)
-                .map(|g| format!("group '{}'", hardware.group_info[g].id))
+            let trigger_group_free_str = s.trigger_group_free.iter().filter(|(_, &t)| t)
+                .map(|(g, _)| format!("group '{}'", hardware.groups[g].id))
                 .join(", ");
             writeln!(f, "  group_free: {}", trigger_group_free_str)?;
 
-            let trigger_value_mem_available_str = s.trigger_value_mem_available.iter().enumerate().flat_map(|(v, mems)| {
-                mems.iter().copied().positions(identity).map(move |m| (v, m))
+            let trigger_value_mem_available_str = s.trigger_value_mem_available.iter().flat_map(|(v, mems)| {
+                mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
             }).map(|(v, m)| {
-                let value_info = &graph.node_info[v];
-                let mem_info = &hardware.mem_info[m];
+                let value_info = &graph.nodes[v];
+                let mem_info = &hardware.memories[m];
                 format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
             }).join(", ");
             writeln!(f, "  value_mem_available: {}", trigger_value_mem_available_str)?;
 
-            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked_or_read.iter().enumerate().flat_map(|(v, mems)| {
-                mems.iter().copied().positions(identity).map(move |m| (v, m))
+            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked_or_read.iter().flat_map(|(v, mems)| {
+                mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
             }).map(|(v, m)| {
-                let value_info = &graph.node_info[v];
-                let mem_info = &hardware.mem_info[m];
+                let value_info = &graph.nodes[v];
+                let mem_info = &hardware.memories[m];
                 format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
             }).join(", ");
             writeln!(f, "  value_mem_unlocked: {}", trigger_value_mem_unlocked)?;
 
-            let trigger_mem_usage_decreased_str = s.trigger_mem_usage_decreased.iter().enumerate().filter_map(|(v, mems)| {
+            let trigger_mem_usage_decreased_str = s.trigger_mem_usage_decreased.iter().filter_map(|(v, mems)| {
                 mems.map(move |delta| (v, delta))
             }).map(|(v, delta)| {
-                let mem_info = &hardware.mem_info[v];
+                let mem_info = &hardware.memories[v];
                 format!("memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
             }).join(", ");
             writeln!(f, "  mem_usage_decreased: {}", trigger_mem_usage_decreased_str)?;
 
-            let trigger_value_live_count_increased_str = s.trigger_value_live_count_increased.iter().enumerate().filter_map(|(v, &increased)| {
+            let trigger_value_live_count_increased_str = s.trigger_value_live_count_increased.iter().filter_map(|(v, &increased)| {
                 if increased {
-                    Some(format!("value '{}'", graph.node_info[v].id))
+                    Some(format!("value '{}'", graph.nodes[v].id))
                 } else {
                     None
                 }

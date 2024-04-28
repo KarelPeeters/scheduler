@@ -1,7 +1,7 @@
 use itertools::{enumerate, Itertools};
 
 use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, Node, NodeInfo, Problem};
-use crate::core::wrapper::{Energy, Time};
+use crate::core::wrapper::{Energy, Time, TypedVec};
 
 #[derive(Debug, Clone)]
 pub struct TestGraphParams {
@@ -109,9 +109,9 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
     graph.add_output(node_output);
 
     // allocations
-    let mut allocations = vec![];
+    let mut allocations = TypedVec::new();
     for (i, &core_group) in enumerate(&core_groups) {
-        for node in graph.nodes() {
+        for (node, node_info) in &graph.nodes {
             // inputs don't get allocations, they already exist
             if graph.inputs.contains(&node) {
                 continue;
@@ -122,7 +122,7 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
                     id: name.to_string(),
                     group: core_group,
                     node,
-                    input_memories: vec![mem_core[i]; graph.node_info[node.0].inputs.len()],
+                    input_memories: vec![mem_core[i]; node_info.inputs.len()],
                     output_memory: mem_core[i],
                     time: Time(time),
                     energy: Energy(energy),
@@ -139,7 +139,7 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         id: "problem".to_owned(),
         hardware,
         graph,
-        allocation_info: allocations,
+        allocations,
         input_placements,
         output_placements,
     }
