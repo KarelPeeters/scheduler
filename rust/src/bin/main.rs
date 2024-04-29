@@ -23,6 +23,7 @@ fn main() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -45,21 +46,19 @@ fn main_milp(problem: &Problem) {
     let mut max_time = Time(0);
     let mut deltas = HashSet::new();
 
-    for alloc in &problem.allocation_info {
-        deltas.insert(alloc.time);
+    for (_, alloc_info) in &problem.allocations {
+        deltas.insert(alloc_info.time);
     }
-    for node in problem.graph.nodes() {
-        let node_info = &problem.graph.node_info[node.0];
-
-        for channel in &problem.hardware.channel_info {
-            let channel_value_delta = channel.cost.time_to_transfer(node_info.size_bits);
+    for (node, node_info) in &problem.graph.nodes {
+        for (_, channel_info) in &problem.hardware.channels {
+            let channel_value_delta = channel_info.cost.time_to_transfer(node_info.size_bits);
             deltas.insert(channel_value_delta);
 
             // TODO we may need to copy some values across a channel multiple times, so this is not a perfect bound
             max_time += channel_value_delta;
         }
 
-        max_time += problem.allocation_info.iter().filter(|a| a.node == node).map(|a| a.time).min().unwrap();
+        max_time += problem.allocations.values().filter(|a| a.node == node).map(|a| a.time).min().unwrap();
     }
 
     // collect all possible times

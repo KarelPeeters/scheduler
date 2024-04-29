@@ -28,8 +28,31 @@
     * For transpose just assume that copy engines are good enough that we can ignore it?
     * Concat just adds memory allocation constraints.
 
+# Current issues
+
+The biggest issues right now are:
+
+* runtime for a single linear network is O(2^N), we need it to be polynomial at worst
+  * needs some extra pruning trick, eg. only allow doing "no action" if there's some advantage to that later
+* runtime for branches (even just 1xN) is horrible
+  * needs more investigation, probably better symmetry breaking?
+* runtime for networks with weights is bad, there's way too much symmetry in copying them
+  * probably solved by better symmetry breaking?
+
 # High level optimizations
 
+* Try different frontier data structure:
+  * each node has lower and upper bound for _each_ index, allowing even more skipping?
+  * node is a state that points to other states that dominate it (except for time and energy)
+    * hopefully this allows for some efficient tree walking thing for checking existence?
+  * find an ever more different structure where states can be compared more directly
+    * eg. dropping as-of-yet useless actions from an existing state should immediately be done when comparing
+    * alternative formulation: when adding a state all partial states should immediately be "added" too
+* Expand symmetry breaking to:
+  * allow time differences
+  * allow pushing around copies if possible
+* Try removing useless actions instead of pruning, this hopefully fills the frontiers faster with useful states.
+  * Maybe go even further and back-edit old partial states?
 * Check for _graph automorphisms_ during dominance check.
   * Precompute them for both the HW and NN in advance, then hopefully it's cheap enough to evaluate.
   * Also look into _graph canonization_, maybe that's even better. 
