@@ -32,6 +32,7 @@ pub struct State {
     // TODO cleanup and combine structures with the same keys?
     pub trigger_everything: bool,
     pub trigger_group_free: TypedVec<Group, bool>,
+    pub trigger_node_started: TypedVec<Node, bool>,
     pub trigger_value_mem_available: TypedVec<Node, TypedVec<Memory, bool>>,
     // TODO set to false again for dead values? 
     pub trigger_value_mem_unlocked_or_read: TypedVec<Node, TypedVec<Memory, bool>>,
@@ -122,6 +123,7 @@ impl State {
             value_remaining_unstarted_uses,
             trigger_everything: true,
             trigger_group_free: TypedVec::full_like(false, &hardware.groups),
+            trigger_node_started: TypedVec::full_like(false, &graph.nodes),
             trigger_value_mem_available: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
             trigger_value_mem_unlocked_or_read: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
             trigger_mem_usage_decreased: TypedVec::full_like(None, &hardware.memories),
@@ -286,6 +288,7 @@ impl State {
     pub fn clear_triggers(&mut self) {
         self.trigger_everything = false;
         self.trigger_group_free.fill(false);
+        self.trigger_node_started.fill(false);
         self.trigger_value_mem_available.values_mut().for_each(|x| x.fill(false));
         self.trigger_value_mem_unlocked_or_read.values_mut().for_each(|x| x.fill(false));
         self.trigger_mem_usage_decreased.fill(None);
@@ -648,6 +651,10 @@ impl State {
 
         // real changes
         assert!(self.unstarted_nodes.remove(&alloc_info.node));
+        let trigger_slot = &mut self.trigger_node_started[alloc_info.node];
+        assert!(!*trigger_slot);
+        *trigger_slot = true;
+
         for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
             let uses = &mut self.value_remaining_unstarted_uses[input_value];
             assert!(*uses >= 1);
@@ -868,6 +875,14 @@ impl Trigger<'_> {
         self.result(
             self.state.state_group[group].is_none(),
             self.state.trigger_group_free[group],
+        )
+    }
+
+    #[must_use]
+    pub fn check_node_started(&mut self, node: Node) -> bool {
+        self.result(
+            !self.state.unstarted_nodes.contains(&node),
+            self.state.trigger_node_started[node],
         )
     }
 

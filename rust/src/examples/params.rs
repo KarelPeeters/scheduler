@@ -1,4 +1,6 @@
-use itertools::{enumerate, Itertools};
+use std::vec;
+
+use itertools::enumerate;
 
 use crate::core::problem::{AllocationInfo, ChannelCost, Graph, GroupInfo, Hardware, MemoryInfo, Node, NodeInfo, Problem};
 use crate::core::wrapper::{Energy, Time, TypedVec};
@@ -11,6 +13,7 @@ pub struct TestGraphParams {
     pub node_size: u64,
     pub weight_size: Option<u64>,
     pub share_weights: bool,
+    pub constrain_order: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -72,13 +75,16 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         id: "node-input".to_string(),
         size_bits: graph_params.node_size,
         inputs: vec![],
+        start_after: vec![],
     });
     graph.add_input(node_input);
     let mut prev = vec![node_input];
     for i_depth in 0..graph_params.depth {
         let mut shared_weight = None;
         
-        let next = (0..graph_params.branches).map(|i_branch| {
+        let mut next = vec![];
+        
+        for i_branch in 0..graph_params.branches {
             let mut inputs = if i_depth == 0 {
                 prev.clone()
             } else {
@@ -88,10 +94,12 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
             if let Some(graph_weight_size) = graph_params.weight_size {
                 let weight = match shared_weight {
                     None => {
+                        // TODO add "constant" utility constructor
                         let weight = graph.add_node(NodeInfo {
                             id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
                             size_bits: graph_weight_size,
                             inputs: vec![],
+                            start_after: vec![],
                         });
                         graph.add_input(weight);
                         weight
@@ -106,18 +114,24 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
                 inputs.push(weight);
             }
 
-            graph.add_node(NodeInfo {
+            let start_after = if graph_params.constrain_order { next.clone() } else { vec![] };
+
+            let node = graph.add_node(NodeInfo {
                 id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
                 size_bits: graph_params.node_size,
                 inputs,
-            })
-        }).collect_vec();
+                start_after,
+            });
+            next.push(node);
+        }
+
         prev = next;
     }
     let node_output = graph.add_node(NodeInfo {
         id: "node-output".to_string(),
         size_bits: graph_params.node_size,
         inputs: prev,
+        start_after: vec![],
     });
     graph.add_output(node_output);
 

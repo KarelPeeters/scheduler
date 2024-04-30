@@ -111,6 +111,12 @@ fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(
     // trigger checks
     let mut trigger = state.new_trigger();
 
+    for &after in &node_info.start_after {
+        if !trigger.check_node_started(after) {
+            return;
+        }
+    }
+
     if !trigger.check_group_free(alloc_info.group) {
         return;
     }

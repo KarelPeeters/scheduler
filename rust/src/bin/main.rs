@@ -24,6 +24,7 @@ fn main() {
             node_size: 500,
             weight_size: None,
             share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,

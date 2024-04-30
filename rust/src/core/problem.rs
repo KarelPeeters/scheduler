@@ -64,6 +64,11 @@ pub struct NodeInfo {
     pub id: String,
     pub size_bits: u64,
     pub inputs: Vec<Node>,
+
+    // Only start this node after the given set of nodes has been started.
+    // This is useful to manually remove symmetries from the optimization problem,
+    // making it easier (faster!) to solve.
+    pub start_after: Vec<Node>,
 }
 
 // hardware
@@ -170,11 +175,18 @@ impl Graph {
         self.nodes.push(info)
     }
 
-    pub fn create_node(&mut self, id: impl Into<String>, size_bits: u64, inputs: Vec<Node>) -> Node {
+    pub fn create_node(
+        &mut self,
+        id: impl Into<String>,
+        size_bits: u64,
+        inputs: Vec<Node>,
+        start_after: Vec<Node>,
+    ) -> Node {
         let info = NodeInfo {
             id: id.into(),
             size_bits,
             inputs,
+            start_after,
         };
         self.add_node(info)
     }
@@ -216,10 +228,16 @@ impl Graph {
             let label = GraphViz::table("Node", rows);
             g.push(format!("node_{} [label=<{}>, shape=box, color=green]", node.0, label));
 
+            let tail = format!("node_{}", node.0);
+
             for (j, input) in node_info.inputs.iter().enumerate() {
-                let head = format!("node_{}", self.nodes.keys().position(|x| x == *input).unwrap());
-                let tail = format!("node_{}", node.0);
+                let head = format!("node_{}", input.0);
                 g.push(format!("{} -> {} [headlabel={}]", head, tail, j));
+            }
+
+            for &after in &node_info.start_after {
+                let head = format!("node_{}", after.0);
+                g.push(format!("{} -> {} [style=\"dotted\"]", head, tail));
             }
         }
 
@@ -228,8 +246,13 @@ impl Graph {
 
     pub fn assert_valid(&self) {
         // TODO assert that graph is a DAG
+        //   even through that should be true by construction, users can still mess around in the public fields
+
         for (_, info) in &self.nodes {
             for &x in &info.inputs {
+                assert!(self.nodes.has_key(x));
+            }
+            for &x in &info.start_after {
                 assert!(self.nodes.has_key(x));
             }
         }
