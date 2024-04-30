@@ -7,6 +7,9 @@ use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use crate::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
 
+// TODO add test case with shared weights
+// TODO add test case with constrained order (that changes the values)
+
 #[test]
 fn empty() {
     let problem = Problem {
@@ -29,6 +32,8 @@ fn single_normal() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 1,
@@ -52,6 +57,8 @@ fn single_zero_sized_node() {
             cross: CrossBranches::Never,
             node_size: 0,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 1,
@@ -75,6 +82,8 @@ fn linear_use_single() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -98,6 +107,8 @@ fn split_use_both() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -124,6 +135,8 @@ fn split_use_single() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -151,6 +164,8 @@ fn single_tradeoff() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 1,
@@ -186,6 +201,8 @@ fn split_tradeoff_deep() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -224,6 +241,8 @@ fn split_tradeoff_shallow() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
@@ -262,6 +281,8 @@ fn single_memory_drop() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: Some(500),
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 1,
@@ -285,6 +306,8 @@ fn tricky_drop_case() {
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: Some(500),
+            share_weights: false,
+            constrain_order: false,
         },
         TestHardwareParams {
             core_count: 2,
