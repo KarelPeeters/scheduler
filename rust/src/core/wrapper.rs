@@ -119,6 +119,14 @@ pub struct Energy(pub i64);
 
 macro_rules! impl_arith {
     ($ty:ident) => {
+        impl $ty {
+            pub fn ceil_div(self, div: i64) -> Self {
+                assert!(self.0 >= 0);
+                assert!(div > 0);
+                let added = self.0.checked_add(div - 1).unwrap();
+                $ty(added / div)
+            }
+        }
         impl std::ops::Add for $ty {
             type Output = Self;
             fn add(self, rhs: Self) -> Self::Output {

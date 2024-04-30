@@ -1,7 +1,7 @@
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 
-use itertools::{enumerate, zip_eq};
+use itertools::{enumerate, zip_eq, Itertools};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
@@ -197,12 +197,26 @@ impl State {
                 .min().unwrap()
         }).sum::<Energy>();
 
-        let min_additional_time = self.unstarted_nodes.iter().map(|node| {
+        let min_additional_times = self.unstarted_nodes.iter().map(|node| {
             problem.allocations.values()
-                .filter(|alloc| alloc.node == *node)
-                .map(|alloc| alloc.time)
-                .min().unwrap()
-        }).max().unwrap_or(Time(0));
+            .filter(|alloc| alloc.node == *node)
+            .map(|alloc| alloc.time)
+            .min().unwrap()
+        }).collect_vec();
+
+        // let mut groups_with_any_allocs = HashSet::new();
+        // for alloc_info in problem.allocations.values() {
+        //     if self.unstarted_nodes.contains(&alloc_info.node) {
+        //         groups_with_any_allocs.insert(alloc_info.group);
+        //     }
+        // }
+
+        let min_additional_time_single = min_additional_times.iter().copied().min().unwrap_or(Time(0));
+        // let min_additional_time_div = min_additional_times.iter().copied().sum::<Time>().ceil_div(max(1, groups_with_any_allocs.len() as i64));
+
+        // TODO why does using a better bound make things slower?
+        // let min_additional_time = max(min_additional_time_single, min_additional_time_div);
+        let min_additional_time = min_additional_time_single;
 
         Cost {
             time: max(self.minimum_time, self.curr_time + min_additional_time),
