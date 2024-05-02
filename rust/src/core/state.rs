@@ -63,7 +63,7 @@ pub struct Cost {
 pub struct Trigger<'s> {
     state: &'s State,
     triggered: bool,
-    valid: bool,
+    pub valid: bool,
 }
 
 // TODO add dead and unavailable here?
@@ -880,6 +880,7 @@ impl Trigger<'_> {
     #[must_use]
     fn result(&mut self, valid: bool, trigger: bool) -> bool {
         // we can't assert valid if triggered, here, the condition might have become false already
+        self.valid &= valid;
         self.triggered |= trigger;
         valid
     }

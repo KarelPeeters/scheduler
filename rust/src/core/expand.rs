@@ -169,9 +169,9 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
 
     // basic checks
     let tried_key = (channel, value);
-    if state.tried_transfers.contains_key(&tried_key) {
-        return;
-    }
+    // if state.tried_transfers.contains_key(&tried_key) {
+    //     return;
+    // }
     // don't bother copying dead values around
     if state.value_remaining_unstarted_uses[value] == 0 {
         return;
@@ -182,17 +182,31 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
     //   group free was already checked earlier
     assert!(trigger.check_group_free(channel_info.group));
     if !trigger.check_mem_value_available(channel_info.mem_source, value) {
-        return;
+        // return;
     }
     // TODO what is this supposed to check? something like "is the given value no longer available in the target memory"?
     // TODO think about the right way to handle dropping+copying operations
     if !trigger.check_mem_value_no_availability(channel_info.mem_dest, value) {
-        return;
+        // return;
     }
     if !trigger.check_mem_space_available(problem, channel_info.mem_dest, value_info.size_bits) {
+        // return;
+    }
+    
+    if !trigger.valid {
         return;
     }
-    if !trigger.was_triggered() {
+
+    state.write_svg_to_file(problem, "final.svg").unwrap();
+    std::fs::write("final.txt", state.summary_string(problem)).unwrap();
+    println!("action: {:?}", (channel, value));
+
+
+    let was_triggered = trigger.was_triggered();
+    assert_eq!(was_triggered, !state.tried_transfers.contains_key(&tried_key));
+
+    if !was_triggered {
+        // println!("channel: not tried but also not triggered");
         return;
     }
 
@@ -202,6 +216,9 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
     expand(problem, state_next, next);
 
     // mark as tried
+    if state.tried_transfers.contains_key(&tried_key) {
+        return;
+    }
     let prev = state.tried_transfers.insert((channel, value), time_range.unwrap());
     assert!(prev.is_none());
 }

@@ -1,0 +1,27 @@
+Basics:
+  curr_time=5000
+  curr_energy=5000
+  minimum_time=9000
+
+Memory:
+  memory 'mem_ext': used 500/None
+    contains 'node-input' with size 500, state AvailableNow { read_lock_count: 0, read_count: 1, since: Time(0) }
+  memory 'mem_chip_0': used 1500/None
+    contains 'node-input' with size 500, state AvailableNow { read_lock_count: 1, read_count: 2, since: Time(1000) }
+    contains 'node-0a' with size 500, state AvailableAtTime(Time(9000))
+    contains 'node-0c' with size 500, state AvailableNow { read_lock_count: 1, read_count: 1, since: Time(5000) }
+  memory 'mem_chip_1': used 500/None
+    contains 'node-0c' with size 500, state AvailableAtTime(Time(5500))
+
+Triggers:
+  everything: false
+  group_free: group 'core_0'
+  value_mem_available: value 'node-0c' in memory 'mem_chip_0'
+  value_mem_unlocked: value 'node-input' in memory 'mem_chip_0', value 'node-0c' in memory 'mem_chip_0'
+  mem_usage_decreased: 
+  value_live_count_increased: 
+Tried:
+  transfers:
+    ((Channel(1), Node(3)), TimeRange { start: Time(5000), end: Time(6000) })
+    ((Channel(2), Node(0)), TimeRange { start: Time(1000), end: Time(1500) })
+  allocs:

@@ -34,7 +34,7 @@ pub struct ActionDrop {
     pub mem: Memory,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct TimeRange {
     pub start: Time,
     /// exclusive

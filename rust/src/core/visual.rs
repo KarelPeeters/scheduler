@@ -328,6 +328,16 @@ impl State {
                 }
             }).join(", ");
             writeln!(f, "  value_live_count_increased: {}", trigger_value_live_count_increased_str)?;
+            
+            writeln!(f, "Tried:")?;
+            writeln!(f, "  transfers:")?;
+            for t in &s.tried_transfers {
+                writeln!(f, "    {:?}", t)?;
+            }
+            writeln!(f, "  allocs:")?;
+            for t in &s.tried_allocs {
+                writeln!(f, "    {:?}", t)?;
+            }
 
             Ok(())
         }
