@@ -30,7 +30,7 @@ fn main() {
             core_count: 2,
             share_group: false,
             mem_size_ext: None,
-            mem_size_int: None,
+            mem_size_int: Some(2000),
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
