@@ -7,7 +7,7 @@ use itertools::{Itertools, zip_eq};
 
 use crate::core::frontier::Frontier;
 use crate::core::problem::{Memory, Problem};
-use crate::core::schedule::Action;
+use crate::core::schedule::{Action, Timed};
 use crate::core::state::{Cost, State};
 use crate::core::wrapper::{Time, TypedIndex, TypedVec};
 
@@ -122,21 +122,22 @@ impl State {
             Ok::<(), std::io::Error>(())
         };
 
-        for action in &self.actions_taken {
+        for &action in &self.actions_taken {
             // comment action debug string
             writeln!(f, "<!-- {:?} -->", action)?;
 
+            let Timed { time, inner: action } = action;
             match action {
                 Action::Wait(_) | Action::Drop(_) => {
                     // don't draw anything
                 }
-                Action::Core(action) => {
-                    let alloc_info = &problem.allocations[action.alloc];
+                Action::Core(alloc) => {
+                    let alloc_info = &problem.allocations[alloc];
                     let node_info = &graph.nodes[alloc_info.node];
 
                     let row = alloc_info.group.to_index();
-                    let text = format!("#{} {} {}", action.alloc.to_index(), node_info.id, alloc_info.id);
-                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "green", &text)?;
+                    let text = format!("#{} {} {}", alloc.to_index(), node_info.id, alloc_info.id);
+                    rect(&mut f, row, time.start.0 as f64, time.end.0 as f64, "green", &text)?;
                 }
                 Action::Channel(action) => {
                     let channel_info = &hardware.channels[action.channel];
@@ -144,7 +145,7 @@ impl State {
 
                     let row = channel_info.group.to_index();
                     let text = format!("#({}, {}) {}", action.channel.to_index(), action.value.to_index(), node_info.id);
-                    rect(&mut f, row, action.time.start.0 as f64, action.time.end.0 as f64, "darkorange", &text)?;
+                    rect(&mut f, row, time.start.0 as f64, time.end.0 as f64, "darkorange", &text)?;
                 }
             }
         }
@@ -160,24 +161,25 @@ impl State {
             vec.push((time.0 as f64, prev_used));
             vec.push((time.0 as f64, prev_used.checked_add_signed(delta).unwrap()));
         };
-        for action in &self.actions_taken {
+        for &action in &self.actions_taken {
+            let Timed { time, inner: action } = action;
             match action {
                 Action::Wait(_) => {
                     // no memory implications
                 }
-                Action::Core(action) => {
-                    let alloc_info = &problem.allocations[action.alloc];
+                Action::Core(alloc) => {
+                    let alloc_info = &problem.allocations[alloc];
                     let node_info = &graph.nodes[alloc_info.node];
-                    add_size_delta(alloc_info.output_memory, action.time.start, node_info.size_bits as i64);
+                    add_size_delta(alloc_info.output_memory, time.start, node_info.size_bits as i64);
                 }
                 Action::Channel(action) => {
                     let channel_info = &hardware.channels[action.channel];
                     let node_info = &graph.nodes[action.value];
-                    add_size_delta(channel_info.mem_dest, action.time.start, node_info.size_bits as i64);
+                    add_size_delta(channel_info.mem_dest, time.start, node_info.size_bits as i64);
                 }
                 Action::Drop(action) => {
                     let node_info = &graph.nodes[action.value];
-                    add_size_delta(action.mem, action.time, -(node_info.size_bits as i64));
+                    add_size_delta(action.mem, time.start, -(node_info.size_bits as i64));
                 }
             }
         }
@@ -292,48 +294,16 @@ impl State {
             }
             writeln!(f)?;
 
-            writeln!(f, "Triggers:")?;
-            writeln!(f, "  everything: {}", s.trigger_everything)?;
-
-            let trigger_group_free_str = s.trigger_group_free.iter().filter(|(_, &t)| t)
-                .map(|(g, _)| format!("    group '{}'", hardware.groups[g].id))
-                .join("\n");
-            writeln!(f, "  group_free:\n{}", trigger_group_free_str)?;
-
-            let trigger_value_mem_available_str = s.trigger_value_mem_available.iter().flat_map(|(v, mems)| {
-                mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
-            }).map(|(v, m)| {
-                let value_info = &graph.nodes[v];
-                let mem_info = &hardware.memories[m];
-                format!("    value '{}' in memory '{}'", value_info.id, mem_info.id)
-            }).join("\n");
-            writeln!(f, "  value_mem_available:\n{}", trigger_value_mem_available_str)?;
-
-            let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked_or_read.iter().flat_map(|(v, mems)| {
-                mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
-            }).map(|(v, m)| {
-                let value_info = &graph.nodes[v];
-                let mem_info = &hardware.memories[m];
-                format!("    value '{}' in memory '{}'", value_info.id, mem_info.id)
-            }).join("\n");
-            writeln!(f, "  value_mem_unlocked:\n{}", trigger_value_mem_unlocked)?;
-
-            let trigger_mem_usage_decreased_str = s.trigger_mem_usage_decreased.iter().filter_map(|(v, mems)| {
-                mems.map(move |delta| (v, delta))
-            }).map(|(v, delta)| {
-                let mem_info = &hardware.memories[v];
-                format!("    memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
-            }).join("\n");
-            writeln!(f, "  mem_usage_decreased:\n{}", trigger_mem_usage_decreased_str)?;
-
-            let trigger_value_live_count_increased_str = s.trigger_value_live_count_increased.iter().filter_map(|(v, &increased)| {
-                if increased {
-                    Some(format!("    value '{}'", graph.nodes[v].id))
-                } else {
-                    None
-                }
-            }).join("\n");
-            writeln!(f, "  value_live_count_increased:\n{}", trigger_value_live_count_increased_str)?;
+            writeln!(f, "Skipped:")?;
+            for (alloc, time) in &s.skipped_allocs {
+                writeln!(f, "  {:?} {:?}", alloc, time)?;
+            }
+            for (action, time) in &s.skipped_transfers {
+                writeln!(f, "  {:?} {:?}", action, time)?;
+            }
+            for (action, info) in &s.skipped_drops {
+                writeln!(f, "  {:?} {:?}", action, info)?;
+            }
 
             Ok(())
         }

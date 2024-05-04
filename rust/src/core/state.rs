@@ -1,55 +1,51 @@
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 
-use itertools::{enumerate, zip_eq, Itertools};
+use itertools::{enumerate, Itertools, zip_eq};
 
 use crate::core::frontier::{DomBuilder, DomDir, Dominance};
 use crate::core::new_frontier::SparseVec;
-use crate::core::problem::{Allocation, Channel, CostTarget, Group, Memory, Node, Problem};
-use crate::core::schedule::{Action, ActionChannel, ActionCore, ActionDrop, ActionWait, TimeRange};
+use crate::core::problem::{Allocation, CostTarget, Group, Memory, Node, Problem};
+use crate::core::schedule::{Action, ActionChannel, ActionDrop, Timed, TimeRange};
 use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::dom_early_check;
 
 #[derive(Clone)]
 pub struct State {
     // minimal state
-    pub actions_taken: Vec<Action>,
+    pub actions_taken: Vec<Timed<Action>>,
 
     // memoized information
     pub curr_time: Time,
     pub curr_energy: Energy,
     pub minimum_time: Time,
 
-    pub state_group: TypedVec<Group, Option<GroupClaim>>,
-    // TODO replace hashmap with typedvec? it's usually sparse though
+    pub state_group: TypedVec<Group, Option<Timed<GroupClaim>>>,
+    // TODO replace hashmap with TypedVec? it's usually sparse though
     pub state_memory_node: TypedVec<Memory, HashMap<Node, ValueState>>,
     pub value_live_count: TypedVec<Node, usize>,
 
     pub unstarted_nodes: HashSet<Node>,
     pub value_remaining_unstarted_uses: TypedVec<Node, u32>,
 
-    // triggers
-    // TODO cleanup and combine structures with the same keys?
-    pub trigger_everything: bool,
-    pub trigger_group_free: TypedVec<Group, bool>,
-    pub trigger_node_started: TypedVec<Node, bool>,
-    pub trigger_value_mem_available: TypedVec<Node, TypedVec<Memory, bool>>,
-    // TODO set to false again for dead values? 
-    pub trigger_value_mem_unlocked_or_read: TypedVec<Node, TypedVec<Memory, bool>>,
-    // TODO don't track this for inf-sized memories?
-    pub trigger_mem_usage_decreased: TypedVec<Memory, Option<(u64, u64)>>,
-    pub trigger_value_live_count_increased: TypedVec<Node, bool>,
+    // filtering (attempt -> most recent time start)
+    // TODO combine into single hashmap?
+    pub skipped_allocs: HashMap<Allocation, TimeRange>,
+    pub skipped_transfers: HashMap<ActionChannel, TimeRange>,
+    pub skipped_drops: HashMap<ActionDrop, SkippedDropInfo>,
+}
 
-    // filtering (attempt -> most recent time range)
-    pub tried_allocs: HashMap<Allocation, TimeRange>,
-    pub tried_transfers: HashMap<(Channel, Node), TimeRange>,
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct SkippedDropInfo {
+    pub time: Time,
+    pub read_count: u64,
 }
 
 // TODO rename
 // TODO store only minimal information here
 #[derive(Debug, Copy, Clone)]
 pub enum GroupClaim {
-    Core(ActionCore),
+    Core(Allocation),
     Channel(ActionChannel),
 }
 
@@ -57,13 +53,6 @@ pub enum GroupClaim {
 pub struct Cost {
     pub time: Time,
     pub energy: Energy,
-}
-
-#[derive(Clone, Copy)]
-pub struct Trigger<'s> {
-    state: &'s State,
-    triggered: bool,
-    valid: bool,
 }
 
 // TODO add dead and unavailable here?
@@ -121,15 +110,9 @@ impl State {
             value_live_count,
             unstarted_nodes,
             value_remaining_unstarted_uses,
-            trigger_everything: true,
-            trigger_group_free: TypedVec::full_like(false, &hardware.groups),
-            trigger_node_started: TypedVec::full_like(false, &graph.nodes),
-            trigger_value_mem_available: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
-            trigger_value_mem_unlocked_or_read: TypedVec::full_like(TypedVec::full_like(false, &hardware.memories), &graph.nodes),
-            trigger_mem_usage_decreased: TypedVec::full_like(None, &hardware.memories),
-            trigger_value_live_count_increased: TypedVec::full_like(false, &graph.nodes),
-            tried_allocs: HashMap::new(),
-            tried_transfers: HashMap::new(),
+            skipped_allocs: HashMap::new(),
+            skipped_transfers: HashMap::new(),
+            skipped_drops: HashMap::new(),
         }
     }
 
@@ -143,19 +126,25 @@ impl State {
         let mut expected_value_live_count = TypedVec::full_like(0, &graph.nodes);
 
         for (_, state) in &self.state_group {
-            match state {
+            match *state {
                 None => {},
-                Some(GroupClaim::Core(state)) => {
-                    let alloc = &problem.allocations[state.alloc];
+                Some(Timed { time, inner: GroupClaim::Core(alloc) }) => {
+                    let alloc = &problem.allocations[alloc];
                     for (&input, &mem) in zip_eq(&graph.nodes[alloc.node].inputs, &alloc.input_memories) {
                         *expected_state_memory_read_lock_count[mem].entry(input).or_insert(0) += 1;
                     }
-                    assert_eq!(self.state_memory_node[alloc.output_memory].get(&alloc.node).unwrap(), &ValueState::AvailableAtTime(state.time.end));
+                    assert_eq!(
+                        self.state_memory_node[alloc.output_memory].get(&alloc.node).unwrap(),
+                        &ValueState::AvailableAtTime(time.end)
+                    );
                 }
-                Some(GroupClaim::Channel(state)) => {
-                    let channel_info = &problem.hardware.channels[state.channel];
-                    *expected_state_memory_read_lock_count[channel_info.mem_source].entry(state.value).or_insert(0) += 1;
-                    assert_eq!(self.state_memory_node[channel_info.mem_dest].get(&state.value).unwrap(), &ValueState::AvailableAtTime(state.time.end));
+                Some(Timed { time, inner: GroupClaim::Channel(action) }) => {
+                    let channel_info = &problem.hardware.channels[action.channel];
+                    *expected_state_memory_read_lock_count[channel_info.mem_source].entry(action.value).or_insert(0) += 1;
+                    assert_eq!(
+                        self.state_memory_node[channel_info.mem_dest].get(&action.value).unwrap(),
+                        &ValueState::AvailableAtTime(time.end)
+                    );
                 }
             }
         }
@@ -280,16 +269,12 @@ impl State {
         used
     }
 
-    pub fn new_trigger(&self) -> Trigger {
-        Trigger {
-            state: self,
-            triggered: self.trigger_everything,
-            valid: true,
-        }
+    pub fn first_done_time(&self) -> Option<Time> {
+        self.state_group.values().filter_map(|a| a.map(|a| a.time.end)).min()
     }
 
-    pub fn first_done_time(&self) -> Option<Time> {
-        self.state_group.values().filter_map(|a| a.map(|a| a.time().end)).min()
+    pub fn is_dead_value(&self, value: Node) -> bool {
+        self.value_remaining_unstarted_uses[value] == 0
     }
 
     #[must_use]
@@ -299,16 +284,6 @@ impl State {
         next
     }
 
-    pub fn clear_triggers(&mut self) {
-        self.trigger_everything = false;
-        self.trigger_group_free.fill(false);
-        self.trigger_node_started.fill(false);
-        self.trigger_value_mem_available.values_mut().for_each(|x| x.fill(false));
-        self.trigger_value_mem_unlocked_or_read.values_mut().for_each(|x| x.fill(false));
-        self.trigger_mem_usage_decreased.fill(None);
-        self.trigger_value_live_count_increased.fill(false);
-    }
-
     fn add_mem_value_read_lock(&mut self, value: Node, mem: Memory) {
         let availability = self.state_memory_node[mem].get_mut(&value).unwrap();
 
@@ -316,11 +291,6 @@ impl State {
             ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
                 *read_lock_count += 1;
                 *read_count += 1;
-
-                if *read_count == 1 {
-                    // this is not really useful (since it's locked anyway) but just for completeness
-                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
-                }
             }
             ValueState::AvailableAtTime(_) => panic!(),
         }
@@ -332,9 +302,6 @@ impl State {
             ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
                 assert!(*read_lock_count > 0);
                 *read_lock_count -= 1;
-                if *read_lock_count == 0 {
-                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
-                }
             }
             ValueState::AvailableAtTime(_) => panic!(),
         }
@@ -344,22 +311,12 @@ impl State {
         let prev = self.state_memory_node[mem].insert(value, availability);
 
         match availability {
-            ValueState::AvailableNow { read_lock_count, read_count, since: _ } => {
+            ValueState::AvailableNow { .. } => {
                 assert!(matches!(prev, Some(ValueState::AvailableAtTime(_))));
-
-                let trigger = &mut self.trigger_value_mem_available[value][mem];
-                assert!(!*trigger);
-                *trigger = true;
-
-                if read_lock_count == 0 || read_count > 0 {
-                    self.trigger_value_mem_unlocked_or_read[value][mem] = true;
-                }
             }
             ValueState::AvailableAtTime(_) => {
                 assert_eq!(prev, None, "Value {value:?} in mem {mem:?} already has availability, trying to insert {availability:?}");
-
                 self.value_live_count[value] += 1;
-                self.trigger_value_live_count_increased[value];
             }
         }
     }
@@ -367,7 +324,6 @@ impl State {
     pub fn drop_value(&mut self, problem: &Problem, mem: Memory, value: Node) {
         // get value before removal
         let mem_space_used_before = self.mem_space_used(problem, mem);
-        let value_size_bits = problem.graph.nodes[value].size_bits;
 
         let mem_size_bits = problem.hardware.memories[mem].size_bits;
         if let Some(mem_size_bits) = mem_size_bits {
@@ -383,66 +339,169 @@ impl State {
         assert!(*live_count > 0);
         *live_count -= 1;
 
-        // update memory usage trigger
-        let slot = &mut self.trigger_mem_usage_decreased[mem];
-        if let Some((_, slot_after)) = slot {
-            // further decrease memory used
-            *slot_after = min(*slot_after, mem_space_used_before - value_size_bits);
-        } else {
-            // mark first memory decrease
-            *slot = Some((mem_space_used_before, mem_space_used_before - value_size_bits));
-        }
-
         // record action
-        self.actions_taken.push(Action::Drop(ActionDrop {
-            time: self.curr_time,
-            value,
-            mem,
-        }));
+        self.actions_taken.push(Timed {
+            time: TimeRange::instant(self.curr_time),
+            inner: Action::Drop(ActionDrop {
+                value,
+                mem,
+            }),
+        });
     }
 
-    fn claim_group(&mut self, group: Group, claim: GroupClaim) {
+    fn claim_group(&mut self, group: Group, time: TimeRange, claim: GroupClaim) {
         let state = &mut self.state_group[group];
         assert!(state.is_none());
-        *state = Some(claim);
+        *state = Some(Timed { time, inner: claim });
     }
 
     fn release_group(&mut self, group: Group) {
         let state = &mut self.state_group[group];
         assert!(state.is_some());
         *state = None;
+    }
 
-        let trigger = &mut self.trigger_group_free[group];
-        assert!(!*trigger);
-        *trigger = true;
+    pub fn could_start_action_now(&self, problem: &Problem, action: Action) -> bool {
+        // TODO write all checks with && instead of with if/return
+        // TODO split up in sub-functions
+        // TODO re-order checks to get this to be as fast as possible
+
+        match action {
+            Action::Wait(_) => {
+                // wait actions can always run
+                true
+            },
+            Action::Core(alloc) => {
+                let alloc_info = &problem.allocations[alloc];
+                let node = alloc_info.node;
+                let node_info = &problem.graph.nodes[node];
+
+                // each node can only be computed once
+                // TODO relax this? maybe recomputing is more efficient!
+                if self.is_node_started(node) {
+                    return false;
+                }
+
+                for &after in &node_info.start_after {
+                    if !self.is_node_started(after) {
+                        return false;
+                    }
+                }
+
+                if !self.check_group_free(alloc_info.group) {
+                    return false;
+                }
+
+                if !self.check_mem_space_available(problem, alloc_info.output_memory, node_info.size_bits) {
+                    return false;
+                }
+
+                for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
+                    if !self.value_available_in_mem_now(input_value, input_mem, None) {
+                        return false;
+                    }
+                }
+
+                true
+            }
+            Action::Channel(action) => {
+                let ActionChannel { channel, value } = action;
+
+                let value_info = &problem.graph.nodes[value];
+                let channel_info = &problem.hardware.channels[channel];
+
+                // don't bother copying dead values around
+                if self.is_dead_value(value) {
+                    return false;
+                }
+
+                if !self.value_available_in_mem_now(value, channel_info.mem_source, None) {
+                    return false;
+                }
+
+                if !self.check_group_free(channel_info.group) {
+                    return false;
+                }
+
+                if self.value_mem_availability(value, channel_info.mem_dest).is_some() {
+                    return false;
+                }
+
+                if !self.check_mem_space_available(problem, channel_info.mem_dest, value_info.size_bits) {
+                    return false;
+                }
+
+                true
+            }
+            Action::Drop(action) => {
+                let ActionDrop { mem, value } = action;
+
+                match self.state_memory_node[mem].get(&value) {
+                    // can't drop value that's not even available
+                    None | Some(ValueState::AvailableAtTime(_)) => {
+                        return false;
+                    }
+                    Some(&ValueState::AvailableNow { read_lock_count, read_count, since: _ }) => {
+                        // can't drop locked value
+                        if read_lock_count != 0 {
+                            return false;
+                        }
+
+                        // TODO instead of this assert, prune states with dead values that are still being copied or calculated
+                        assert!(!self.is_dead_value(value), "dead values should have been dropped already");
+
+                        // it doesn't make sense to drop unread values, they should have never been created
+                        // TODO prune and delete? or does that just create duplicate states for no reason?
+                        if read_count == 0 {
+                            return false;
+                        }
+
+                        // don't drop last instance of live value
+                        if !self.check_not_single_live_instance(value) {
+                            return false;
+                        }
+
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_action(&mut self, problem: &Problem, action: Action) -> TimeRange {
+        let time = TimeRange {
+            start: self.curr_time,
+            end: self.curr_time + action.time(problem),
+        };
+
+        self.actions_taken.push(Timed { time, inner: action });
+
+        self.minimum_time = max(self.minimum_time, time.end);
+        self.curr_energy += action.energy(problem);
+
+        time
     }
 
     pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> Result<(), ()> {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
-        let time_start = self.curr_time;
+        self.push_action(problem, Action::Wait(time_end - self.curr_time));
         self.curr_time = time_end;
-        self.actions_taken.push(Action::Wait(ActionWait { time: TimeRange { start: time_start, end: time_end } }));
-
-        // TODO avoid cloning these in the first place!
-        // TODO do these before or after completing the operations? probably before, since them mem usage is highest
-        self.clear_triggers();
-        self.maybe_clear_tried(problem);
-
-        let mut symmetry_break = false;
 
         // complete operations
+        let mut symmetry_break = false;
+
         for group in problem.hardware.groups.keys() {
-            if let Some(action) = self.state_group[group] {
-                if action.time().end > time_end {
+            if let Some(claim) = self.state_group[group] {
+                if claim.time.end > time_end {
                     // not done yet
                     continue
                 }
 
-                match action {
-                    GroupClaim::Core(action) => {
-                        let alloc_info = &problem.allocations[action.alloc];
+                match claim.inner {
+                    GroupClaim::Core(alloc) => {
+                        let alloc_info = &problem.allocations[alloc];
                         for (&input_value, &input_mem) in zip_eq(&problem.graph.nodes[alloc_info.node].inputs, &alloc_info.input_memories) {
                             self.release_mem_value_read_lock(input_value, input_mem);
                         }
@@ -451,19 +510,21 @@ impl State {
                         // symmetry breaking
                         if !symmetry_break {
                             for &other_action in &self.actions_taken {
-                                if let Action::Core(other_action) = other_action {
-                                    let other_info = &problem.allocations[other_action.alloc];
+                                if let Action::Core(other_alloc) = other_action.inner {
+                                    let other_info = &problem.allocations[other_alloc];
 
                                     // only break symmetry within group
                                     if alloc_info.group != other_info.group {
                                         continue
                                     }
                                     // check symmetry condition break
-                                    if action.alloc >= other_action.alloc {
+                                    if alloc >= other_alloc {
                                         continue
                                     }
 
-                                    if self.could_swap_core_actions(problem, action, other_action) {
+                                    let curr_timed = Timed { time: claim.time, inner: alloc };
+                                    let other_timed = Timed { time: other_action.time, inner: other_alloc };
+                                    if self.could_swap_core_actions(problem, curr_timed, other_timed) {
                                         symmetry_break = true;
                                         break;
                                     }
@@ -478,8 +539,8 @@ impl State {
 
                         // symmetry breaking
                         if !symmetry_break {
-                            for &other_action in &self.actions_taken {
-                                if let Action::Channel(other_action) = other_action {
+                            for &other_timed in &self.actions_taken {
+                                if let Action::Channel(other_action) = other_timed.inner {
                                     let other_info = &problem.hardware.channels[other_action.channel];
 
                                     // only break symmetry within group
@@ -491,7 +552,9 @@ impl State {
                                         continue
                                     }
 
-                                    if self.could_swap_channel_actions(problem, action, other_action) {
+                                    let curr_timed = Timed { time: claim.time, inner: action };
+                                    let other_timed = Timed { time: other_timed.time, inner: other_action };
+                                    if self.could_swap_channel_actions(problem, curr_timed, other_timed) {
                                         symmetry_break = true;
                                         break;
                                     }
@@ -512,9 +575,10 @@ impl State {
         }
     }
 
-    fn could_swap_core_actions(&self, problem: &Problem, curr_action: ActionCore, other_action: ActionCore) -> bool {
-        let curr_info = &problem.allocations[curr_action.alloc];
-        let other_info = &problem.allocations[other_action.alloc];
+    // TODO use curr time or time from the action?
+    fn could_swap_core_actions(&self, problem: &Problem, curr_action: Timed<Allocation>, other_action: Timed<Allocation>) -> bool {
+        let curr_info = &problem.allocations[curr_action.inner];
+        let other_info = &problem.allocations[other_action.inner];
         assert_eq!(curr_info.group, other_info.group);
 
         // things to check:
@@ -553,19 +617,20 @@ impl State {
     }
 
     // TODO also swap across different channels/groups and maybe even across core-channel?
-    fn could_swap_channel_actions(&self, problem: &Problem, curr_action: ActionChannel, other_action: ActionChannel) -> bool {
-        let curr_info = &problem.hardware.channels[curr_action.channel];
-        let other_info = &problem.hardware.channels[other_action.channel];
+    // TODO use curr time or time from the action?
+    fn could_swap_channel_actions(&self, problem: &Problem, curr_action: Timed<ActionChannel>, other_action: Timed<ActionChannel>) -> bool {
+        let curr_info = &problem.hardware.channels[curr_action.inner.channel];
+        let other_info = &problem.hardware.channels[other_action.inner.channel];
         assert_eq!(curr_info.group, other_info.group);
 
         let other_has_not_been_used = matches!(
-            self.value_mem_availability(other_action.value, other_info.mem_dest),
+            self.value_mem_availability(other_action.inner.value, other_info.mem_dest),
             Some(ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: _ })
         );
 
         // TODO this is too strict, if there was enough memory to keep them alive during the entire time that's enough
-        let other_has_operands_now = self.value_available_in_mem_now(other_action.value, other_info.mem_source, Some(self.curr_time - other_action.time.len()));
-        let curr_has_operands_earlier = self.value_available_in_mem_now(curr_action.value, curr_info.mem_source, Some(other_action.time.end - curr_action.time.len()));
+        let other_has_operands_now = self.value_available_in_mem_now(other_action.inner.value, other_info.mem_source, Some(self.curr_time - other_action.time.len()));
+        let curr_has_operands_earlier = self.value_available_in_mem_now(curr_action.inner.value, curr_info.mem_source, Some(other_action.time.end - curr_action.time.len()));
 
         let could_swap = other_has_operands_now
             && other_has_not_been_used
@@ -576,15 +641,16 @@ impl State {
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
+        // TODO remove this, it's just a temporary hack until proper time pruning starts working
         // Note: Don't drop dead values in inf sized memories, it's useless and makes future liveness checking 
         //   for symmetries harder. We still loop through everything to make sure we didn't do any 
         //   useless dead value transfers.
-        
-        for (mem, mem_info) in &problem.hardware.memories {
-            let used_before = self.mem_space_used(problem, mem);
 
+        let mut actions_to_push = vec![];
+        let mut exit = false;
+
+        for (mem, mem_info) in &problem.hardware.memories {
             let mem_content = &mut self.state_memory_node[mem];
-            let mut exit = false;
 
             mem_content.retain(|&value, &mut availability| {
                 if let ValueState::AvailableNow { read_lock_count, read_count, since: _ } = availability {
@@ -608,11 +674,8 @@ impl State {
 
                     // dead and read at some point, drop
                     // TODO go back in time and drop at end of last usage? mostly for plotting clarity
-                    self.actions_taken.push(Action::Drop(ActionDrop {
-                        time: self.curr_time,
-                        value,
-                        mem,
-                    }));
+                    //   (and actually important for proper memory savings)
+                    actions_to_push.push(Action::Drop(ActionDrop { value, mem }));
 
                     let live_count = &mut self.value_live_count[value];
                     assert!(*live_count > 0);
@@ -623,52 +686,26 @@ impl State {
                     true
                 }
             });
+        }
 
-            if exit {
-                return Err(());
-            }
+        for a in actions_to_push {
+            self.push_action(problem, a);
+        }
 
-            let used_after = self.mem_space_used(problem, mem);
-            if used_before != used_after {
-                assert!(used_after < used_before);
-
-                let slot = &mut self.trigger_mem_usage_decreased[mem];
-                let new = (used_before, used_after);
-
-                match slot {
-                    None => {
-                        *slot = Some(new);
-                    }
-                    Some((_slot_before, slot_after)) => {
-                        *slot_after = min(*slot_after, used_after);
-                    }
-                }
-            }
+        // TODO earlier exit? is it important that we push the actions?
+        if exit {
+            return Err(());
         }
 
         Ok(())
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
+        let time = self.push_action(problem, Action::Core(alloc));
+
         let alloc_info = &problem.allocations[alloc];
         let node_info = &problem.graph.nodes[alloc_info.node];
-
-        // metadata
-        let time_delta = alloc_info.time;
-        let energy_delta = alloc_info.energy;
-
-        let time_end = self.curr_time + time_delta;
-        let time_range = TimeRange { start: self.curr_time, end: time_end };
-        let action = ActionCore {
-            time: time_range,
-            alloc,
-        };
-
-        // real changes
         assert!(self.unstarted_nodes.remove(&alloc_info.node));
-        let trigger_slot = &mut self.trigger_node_started[alloc_info.node];
-        assert!(!*trigger_slot);
-        *trigger_slot = true;
 
         for (&input_value, &input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
             let uses = &mut self.value_remaining_unstarted_uses[input_value];
@@ -677,84 +714,104 @@ impl State {
 
             self.add_mem_value_read_lock(input_value, input_mem);
         }
-        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time_end));
-        self.claim_group(alloc_info.group, GroupClaim::Core(action));
+        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time.end));
+        self.claim_group(alloc_info.group, time, GroupClaim::Core(alloc));
 
-        // common
-        self.start_action_common(Action::Core(action), time_end, energy_delta);
-        time_range
+        time
     }
 
-    pub fn do_action_channel(&mut self, problem: &Problem, channel: Channel, value: Node) -> TimeRange {
-        let channel_info = &problem.hardware.channels[channel];
+    pub fn do_action_channel(&mut self, problem: &Problem, action: ActionChannel) -> TimeRange {
+        let time = self.push_action(problem, Action::Channel(action));
 
+        let ActionChannel { channel, value } = action;
+        let channel_info = &problem.hardware.channels[channel];
         assert!(self.value_mem_availability(value, channel_info.mem_dest).is_none());
 
-        // metadata
-        let size_bits = problem.graph.nodes[value].size_bits;
-        let time_delta = channel_info.cost.time_to_transfer(size_bits);
-        let energy_delta = channel_info.cost.energy_to_transfer(size_bits);
-
-        let time_end = self.curr_time + time_delta;
-        let time_range = TimeRange { start: self.curr_time, end: time_end };
-        let action = ActionChannel {
-            time: time_range,
-            channel,
-            value,
-        };
-
-        // real changes
         self.add_mem_value_read_lock(value, channel_info.mem_source);
-        self.mark_mem_value_available(value, channel_info.mem_dest, ValueState::AvailableAtTime(time_end));
-        self.claim_group(channel_info.group, GroupClaim::Channel(action));
+        self.mark_mem_value_available(value, channel_info.mem_dest, ValueState::AvailableAtTime(time.end));
+        self.claim_group(channel_info.group, time, GroupClaim::Channel(action));
 
-        // common
-        self.start_action_common(Action::Channel(action), time_end, energy_delta);
-        time_range
+        time
     }
 
-    fn start_action_common(&mut self, action: Action, time_end: Time, energy_delta: Energy) {
-        self.actions_taken.push(action);
-        self.minimum_time = max(self.minimum_time, time_end);
-        self.curr_energy += energy_delta;
-    }
+    // TODO update this comment, the current details are probably fundamentally wrong
+    // TODO this function should be called after every pushed action, not just after waiting
+    // TODO use "there has to be a justification to run the action now instead of earlier"
+    /// Prune the "skipped" action lists.
+    /// An action should be dropped iff any of:
+    ///   * Some new actions that have started after the action under consideration cause the action to
+    ///       no longer be possible in its original timeslot.
+    ///       * eg. the group is being used for a different action
+    ///       * eg. the output no longer fits in the output memory
+    ///           (continuously from when the action would have started until now)
+    ///   * The action is not longer relevant and will no longer be tried anyway,
+    ///       This is just a memory saving trick and does not matter for correctness.
+    ///       * eg. the output value is now dead
+    ///
+    /// *Implementation note*: All of these properties only need to be checked for the current situation, since
+    /// this function will be called repeatedly.
+    pub fn prune_skipped_actions(&mut self, problem: &Problem) {
+        // TODO this could also be done more incrementally instead of in this central place, but that's more brittle
 
-    fn maybe_clear_tried(&mut self, problem: &Problem) {
-        // only drop iff any of
-        //   * the action is not longer relevant and will no longer be tried anyway (eg. because the involved values are dead)
-        //   * we decided to do something else with that group in that time slot (not necessarily at the same start, just overlapping)
-        //   * the output value would not have fit in memory at some point between then and now
-        let mut tried_transfers = std::mem::take(&mut self.tried_transfers);
-        tried_transfers.retain(|&(channel, node), &mut time| {
+        let mut skipped_drops = std::mem::take(&mut self.skipped_drops);
+        skipped_drops.retain(|&action, &mut info| {
+            let ActionDrop { value, mem } = action;
+
+            match self.value_mem_availability(value, mem) {
+                None => {
+                    // this must mean that it is dead, since it can't have been dropped
+                    //   (it would have been blocked by skipped_drops)
+                    assert!(self.is_dead_value(value));
+                    // no need to keep skips for dead values around
+                    false
+                }
+                Some(ValueState::AvailableAtTime(_)) => {
+                    // was deleted at some point and will reappear, allow dropping again
+                    false
+                }
+                Some(ValueState::AvailableNow { read_count, .. }) => {
+                    // still available, only allow dropping again if the value was actually used
+                    // TODO careful, this will interact strangely if we prevent dropping too much at some point
+
+                    assert!(read_count >= info.read_count);
+                    let used_after_previous = read_count > info.read_count;
+                    !used_after_previous
+                }
+            }
+        });
+        assert!(self.skipped_drops.is_empty());
+        self.skipped_drops = skipped_drops;
+
+        let mut skipped_transfers = std::mem::take(&mut self.skipped_transfers);
+        skipped_transfers.retain(|&action, &mut time| {
+            let ActionChannel { channel, value } = action;
+
             // dead
-            if self.value_remaining_unstarted_uses[node] == 0 {
+            if self.is_dead_value(value) {
                 return false;
             }
 
             // overlap
             let channel_info = &problem.hardware.channels[channel];
             if let Some(claim) = self.state_group[channel_info.group] {
-                if claim.time().overlaps(time) {
+                if claim.time.overlaps(time) {
                     return false;
                 }
             }
 
             // fit
-            {
-                let mut dummy = self.new_trigger();
-                if !dummy.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.nodes[node].size_bits) {
-                    return false;
-                }
+            if !self.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.nodes[value].size_bits) {
+                return false;
             }
 
             // keep
             true
         });
-        assert!(self.tried_transfers.is_empty());
-        self.tried_transfers = tried_transfers;
+        assert!(self.skipped_transfers.is_empty());
+        self.skipped_transfers = skipped_transfers;
 
-        let mut tried_allocs = std::mem::take(&mut self.tried_allocs);
-        tried_allocs.retain(|&alloc, &mut time| {
+        let mut skipped_allocs = std::mem::take(&mut self.skipped_allocs);
+        skipped_allocs.retain(|&alloc, &mut time| {
             let alloc_info = &problem.allocations[alloc];
 
             // dead
@@ -764,28 +821,25 @@ impl State {
 
             // overlap
             if let Some(claim) = self.state_group[alloc_info.group] {
-                if claim.time().overlaps(time) {
+                if claim.time.overlaps(time) {
                     return false;
                 }
             }
 
             // fit
-            {
-                let mut dummy = self.new_trigger();
-                if !dummy.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.nodes[alloc_info.node].size_bits) {
-                    return false;
-                }
+            if !self.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.nodes[alloc_info.node].size_bits) {
+                return false;
             }
 
             // keep
             true
         });
-        assert!(self.tried_allocs.is_empty());
-        self.tried_allocs = tried_allocs;
+        assert!(self.skipped_allocs.is_empty());
+        self.skipped_allocs = skipped_allocs;
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {
-        if self.value_remaining_unstarted_uses[value] == 0 {
+        if self.is_dead_value(value) {
             // dead, best possible case
             return i64::MIN;
         }
@@ -853,7 +907,7 @@ impl State {
             let v = match self.state_group[group] {
                 // TODO go back to using current time here? that fails with actions that take zero time
                 None => i64::MIN,
-                Some(action) => (action.time().end - self.curr_time).0,
+                Some(action) => (action.time.end - self.curr_time).0,
             };
             key.push(next_index(), v);
         }
@@ -875,104 +929,34 @@ impl State {
 
         (key, next_index())
     }
-}
 
-impl Trigger<'_> {
+    // TODO rename and clean up all of the following checks
     #[must_use]
-    fn result(&mut self, valid: bool, trigger: bool) -> bool {
-        // we can't assert valid if triggered, here, the condition might have become false already
-        self.triggered |= trigger;
-        valid
+    pub fn check_group_free(&self, group: Group) -> bool {
+        self.state_group[group].is_none()
     }
 
     #[must_use]
-    pub fn check_group_free(&mut self, group: Group) -> bool {
-        self.result(
-            self.state.state_group[group].is_none(),
-            self.state.trigger_group_free[group],
-        )
+    pub fn is_node_started(&self, node: Node) -> bool {
+        !self.unstarted_nodes.contains(&node)
     }
 
     #[must_use]
-    pub fn check_node_started(&mut self, node: Node) -> bool {
-        self.result(
-            !self.state.unstarted_nodes.contains(&node),
-            self.state.trigger_node_started[node],
-        )
-    }
-
-    #[must_use]
-    pub fn check_mem_space_available(&mut self, problem: &Problem, mem: Memory, size_bits: u64) -> bool {
-        let mem_size = problem.hardware.memories[mem].size_bits;
-
-        match mem_size {
-            None => {
-                // inf memory always fits but never triggers
-                self.result(true, false)
-            }
+    pub fn check_mem_space_available(&self, problem: &Problem, mem: Memory, size_bits: u64) -> bool {
+        match problem.hardware.memories[mem].size_bits {
+            None => true,
             Some(mem_size) => {
-                // fits if fits
-                //  note: this has to be separate from the trigger calculation, we might have made even more space since then
-                //  TODO is that note actually true?
-                let used = self.state.mem_space_used(problem, mem);
-                let fits = used + size_bits <= mem_size;
-
-                // trigger if fit changed
-                let triggered = if let Some((before, after)) = self.state.trigger_mem_usage_decreased[mem] {
-                    let fit_before = before + size_bits <= mem_size;
-                    let fit_after = after + size_bits <= mem_size;
-                    fit_after && !fit_before
-                } else {
-                    false
-                };
-
-                self.result(fits, triggered)
+                let used = self.mem_space_used(problem, mem);
+                used + size_bits <= mem_size
             }
         }
     }
 
     #[must_use]
-    pub fn check_mem_value_available(&mut self, mem: Memory, value: Node) -> bool {
-        self.result(
-            self.state.value_available_in_mem_now(value, mem, None),
-            self.state.trigger_value_mem_available[value][mem],
-        )
-    }
-
-    #[must_use]
-    pub fn check_mem_value_no_availability(&mut self, mem: Memory, value: Node) -> bool {
-        // TODO use drop trigger here? generally think about how this should interact with triggering
-        self.result(
-            self.state.value_mem_availability(value, mem).is_none(),
-            false,
-        )
-    }
-
-    #[must_use]
-    pub fn check_mem_value_unlocked_and_read(&mut self, mem: Memory, value: Node) -> bool {
-        let valid = match self.state.value_mem_availability(value, mem) {
-            None | Some(ValueState::AvailableAtTime(_)) => false,
-            Some(ValueState::AvailableNow { read_lock_count, read_count, since: _ }) => {
-                read_lock_count == 0 && read_count > 0
-            }
-        };
-        self.result(
-            valid,
-            self.state.trigger_value_mem_unlocked_or_read[value][mem],
-        )
-    }
-
-    #[must_use]
-    pub fn check_not_single_live_instance(&mut self, value: Node) -> bool {
-        let live_count = self.state.value_live_count[value];
+    pub fn check_not_single_live_instance(&self, value: Node) -> bool {
+        let live_count = self.value_live_count[value];
         assert!(live_count > 0);
-        self.result(live_count > 1, self.state.trigger_value_live_count_increased[value])
-    }
-
-    #[must_use]
-    pub fn was_triggered(self) -> bool {
-        assert!(self.valid);
-        self.triggered
+        live_count > 1
     }
 }
 
@@ -996,14 +980,5 @@ impl Dominance for Cost {
 
         dom_early_check!(dom);
         dom.finish()
-    }
-}
-
-impl GroupClaim {
-    fn time(&self) -> TimeRange {
-        match self {
-            GroupClaim::Core(a) => a.time,
-            GroupClaim::Channel(a) => a.time,
-        }
     }
 }

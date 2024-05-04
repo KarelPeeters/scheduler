@@ -1,7 +1,6 @@
-use itertools::zip_eq;
-
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
-use crate::core::state::{State, ValueState};
+use crate::core::schedule::{Action, ActionChannel, ActionDrop};
+use crate::core::state::{SkippedDropInfo, State, ValueState};
 
 #[inline(never)]
 pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
@@ -14,6 +13,9 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
         //   maybe even go back and add all partial states?
         return;
     }
+
+    // TODO where to call this exactly?
+    state.prune_skipped_actions(problem);
     
     // drop non-dead values
     // TODO only drop dead values if necessary for the actions that are starting at the current time?
@@ -24,7 +26,7 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
         if mem_info.size_bits.is_none() {
             continue;
         }
-        expand_try_drop(problem, &state, next, mem);
+        expand_try_drop(problem, &mut state, next, mem);
     }
 
     // maybe start core operations
@@ -53,84 +55,45 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
 // TODO instead of early dropping, only drop if we actually need more space?
 //   alternatively, prune value drops that didn't end up being necessary
 #[inline(never)]
-fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State), mem: Memory) {
+fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?
     for value in problem.graph.nodes.keys() {
-        match state.state_memory_node[mem].get(&value) {
-            // can't drop value that's not even available
-            None | Some(ValueState::AvailableAtTime(_)) => {
-                continue;
-            }
-            Some(&ValueState::AvailableNow { read_lock_count, read_count: _, since: _ }) => {
-                let mut trigger = state.new_trigger();
+        let action = ActionDrop { mem, value };
 
-                if read_lock_count == 0 {
-                    // TODO instead of this assert, prune states with dead values that are still being copied or calculated
-                    assert!(state.value_remaining_unstarted_uses[value] > 0, "dead values should have been dropped already");
-                }
-
-                // can't drop value that's locked, and
-                //   no reason to drop unused value: it should not have been put here in the first place
-                if !trigger.check_mem_value_unlocked_and_read(mem, value) {
-                    continue;
-                }
-                // don't drop last instance of live value
-                if !trigger.check_not_single_live_instance(value) {
-                    continue;
-                }
-
-                if !trigger.was_triggered() {
-                    continue;
-                }
-
-                // try dropping the value
-                let mut state_next = state.clone();
-                state_next.drop_value(problem, mem, value);
-                expand(problem, state_next, next);
-
-                // no need to mark as tried, the trigger stuff already handles that
-            }
+        // check if action should be tried 
+        if state.skipped_drops.contains_key(&action) {
+            continue;
         }
+        if !state.could_start_action_now(problem, Action::Drop(action)) {
+            continue;
+        }
+
+        // do action
+        let mut state_next = state.clone();
+        state_next.drop_value(problem, mem, value);
+        expand(problem, state_next, next);
+
+        // don't do action, mark as skipped
+        let info = SkippedDropInfo {
+            time: state.curr_time,
+            read_count: match state.value_mem_availability(value, mem) {
+                Some(ValueState::AvailableNow { read_count, .. }) => read_count,
+                _ => unreachable!()
+            },
+        };
+
+        let prev = state.skipped_drops.insert(action, info);
+        assert!(prev.is_none());
     }
 }
 
 #[inline(never)]
 fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), alloc: Allocation) {
-    // aliases
-    let alloc_info = &problem.allocations[alloc];
-    let node = alloc_info.node;
-    let node_info = &problem.graph.nodes[node];
-
-    // basic checks
-    if state.tried_allocs.contains_key(&alloc) {
+    // check if action can run
+    if state.skipped_allocs.contains_key(&alloc) {
         return;
     }
-    if !state.unstarted_nodes.contains(&node) {
-        return;
-    }
-
-    // trigger checks
-    let mut trigger = state.new_trigger();
-
-    for &after in &node_info.start_after {
-        if !trigger.check_node_started(after) {
-            return;
-        }
-    }
-
-    if !trigger.check_group_free(alloc_info.group) {
-        return;
-    }
-    if !trigger.check_mem_space_available(problem, alloc_info.output_memory, node_info.size_bits) {
-        return;
-    }
-    for (input_value, input_mem) in zip_eq(&node_info.inputs, &alloc_info.input_memories) {
-        if !trigger.check_mem_value_available(*input_mem, *input_value) {
-            return;
-        }
-    }
-
-    if !trigger.was_triggered() {
+    if !state.could_start_action_now(problem, Action::Core(alloc)) {
         return;
     }
 
@@ -139,22 +102,20 @@ fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_core(problem, alloc)));
     expand(problem, state_next, next);
 
-    // mark as tried
-    let prev = state.tried_allocs.insert(alloc, time_range.unwrap()).is_none();
+    // don't do action, mark as skipped
+    let prev = state.skipped_allocs.insert(alloc, time_range.unwrap()).is_none();
     assert!(prev);
 }
 
 #[inline(never)]
 fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel) {
-    // aliases
-    let channel_info = &problem.hardware.channels[channel];
-
     // check that channel is actually free before going through the following loops
+    let channel_info = &problem.hardware.channels[channel];
     if state.state_group[channel_info.group].is_some() {
         return;
     }
 
-    // TODO switch to indexmap for deterministic iteration order?
+    // TODO switch to indexmap for deterministic iteration order, instead of this slower loop-and-check workaround
     for value in problem.graph.nodes.keys() {
         if state.state_memory_node[channel_info.mem_source].contains_key(&value) {
             expand_try_channel_transfer(problem, state, next, channel, value);
@@ -164,45 +125,25 @@ fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMu
 
 #[inline(never)]
 fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel, value: Node) {
-    // aliases
-    let value_info = &problem.graph.nodes[value];
-    let channel_info = &problem.hardware.channels[channel];
+    let action = ActionChannel { channel, value };
 
-    // basic checks
-    let tried_key = (channel, value);
-    if state.tried_transfers.contains_key(&tried_key) {
+    // check if action can run
+    if state.skipped_transfers.contains_key(&action) {
         return;
     }
-    // don't bother copying dead values around
-    if state.value_remaining_unstarted_uses[value] == 0 {
-        return;
-    }
-
-    // trigger checks
-    let mut trigger = state.new_trigger();
-    //   group free was already checked earlier
-    assert!(trigger.check_group_free(channel_info.group));
-    if !trigger.check_mem_value_available(channel_info.mem_source, value) {
-        return;
-    }
-    // TODO what is this supposed to check? something like "is the given value no longer available in the target memory"?
-    // TODO think about the right way to handle dropping+copying operations
-    if !trigger.check_mem_value_no_availability(channel_info.mem_dest, value) {
-        return;
-    }
-    if !trigger.check_mem_space_available(problem, channel_info.mem_dest, value_info.size_bits) {
-        return;
-    }
-    if !trigger.was_triggered() {
+    let action = ActionChannel { channel, value };
+    if !state.could_start_action_now(problem, Action::Channel(action)) {
         return;
     }
 
     // do action
     let mut time_range = None;
-    let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_channel(problem, channel, value)));
+    let state_next = state.clone_and_then(|n| {
+        time_range = Some(n.do_action_channel(problem, action))
+    });
     expand(problem, state_next, next);
 
-    // mark as tried
-    let prev = state.tried_transfers.insert((channel, value), time_range.unwrap());
+    // don't do action, mark as skipped
+    let prev = state.skipped_transfers.insert(action, time_range.unwrap());
     assert!(prev.is_none());
 }
