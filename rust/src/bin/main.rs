@@ -18,8 +18,8 @@ use rust::examples::params::{CrossBranches, test_problem, TestGraphParams, TestH
 fn main() {
     let problem = test_problem(
         TestGraphParams {
-            depth: 4,
-            branches: 3,
+            depth: 2,
+            branches: 2,
             cross: CrossBranches::Never,
             node_size: 500,
             weight_size: None,
@@ -37,7 +37,7 @@ fn main() {
         &[("basic", 4000, 1000)],
     );
     let target = CostTarget::Full;
-    let method = SolveMethod::Queue;
+    let method = SolveMethod::Recurse;
     let partial_plot_frequency = 1000;
     
     main_solver(&problem, target, method, partial_plot_frequency);

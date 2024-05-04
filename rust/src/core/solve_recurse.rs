@@ -31,14 +31,18 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
         frontier_partial: &mut frontier_partial_linear,
     };
 
-    recurse(&mut ctx, state);
+    recurse(&mut ctx, state, 10);
 
     frontier_done
 }
 
 // TODO split this up into smaller functions
 #[inline(never)]
-fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) {
+fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) {
+    if depth == 0 {
+        return;
+    }
+    
     let problem = ctx.problem;
     state.assert_valid(problem);
 
@@ -58,16 +62,16 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) {
     }
 
     // pruning
-    if !ctx.frontier_done.would_add(&state.estimate_final_cost_conservative(problem), &ctx.target) {
-        return;
-    }
-    let added_partial = ctx.frontier_partial.add_if_not_dominated(state.dom_key_min(problem, ctx.target).0);
-    if !added_partial {
-        return;
-    }
+    // if !ctx.frontier_done.would_add(&state.estimate_final_cost_conservative(problem), &ctx.target) {
+    //     return;
+    // }
+    // let added_partial = ctx.frontier_partial.add_if_not_dominated(state.dom_key_min(problem, ctx.target).0);
+    // if !added_partial {
+    //     return;
+    // }
     ctx.reporter.report_new_state(problem, ctx.frontier_partial, &state);
 
     expand(problem, state, &mut |next_state| {
-        recurse(ctx, next_state);
+        recurse(ctx, next_state, depth -1);
     });
 }
