@@ -14,6 +14,7 @@ pub trait Dominance {
     fn dominance(&self, other: &Self, aux: &Self::Aux) -> DomDir;
 }
 
+#[derive(Clone)]
 pub struct Entry<K, V> {
     key: K,
     value: V,
@@ -21,6 +22,7 @@ pub struct Entry<K, V> {
     next_index: Option<usize>,
 }
 
+#[derive(Clone)]
 pub struct Frontier<K, V> {
     entries: Vec<Entry<K, V>>,
     first_index: Option<usize>,
@@ -178,6 +180,15 @@ impl<K, V> Frontier<K, V> {
 
         if cfg!(debug_assertions) {
             self.assert_valid();
+        }
+    }
+
+    /// Mutate entries in-place.
+    /// The function `f` should preserve dominance between keys, 
+    /// otherwise the frontier guarantees might not be valid any more.
+    pub fn mutate_preserve_dominance(&mut self, mut f: impl FnMut(&mut K, &mut V)) {
+        for entry in &mut self.entries {
+            f(&mut entry.key, &mut entry.value);
         }
     }
 }

@@ -49,7 +49,7 @@ pub enum GroupClaim {
     Channel(ActionChannel),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
 pub struct Cost {
     pub time: Time,
     pub energy: Energy,
@@ -857,6 +857,38 @@ impl State {
         }
     }
 
+    pub fn achievement(&self, problem: &Problem) -> Vec<i64> {
+        let mut result = vec![];
+
+        // group availability
+        for group in problem.hardware.groups.keys() {
+            let v = match self.state_group[group] {
+                // TODO go back to using current time here? that fails with actions that take zero time
+                None => i64::MIN,
+                Some(action) => (action.time.end - self.curr_time).0,
+            };
+            result.push(v);
+        }
+
+        // value availability
+        // TODO we should be able to fully skip this during comparisons if the value states don't match
+        for mem in problem.hardware.memories.keys() {
+            for value in problem.graph.nodes.keys() {
+                result.push(self.value_mem_dom_key_min(value, mem));
+            }
+        }
+
+        // TODO this can probably be removed for achievement
+        // memory space (less used is better for memories with limited size)
+        for (mem, mem_info) in &problem.hardware.memories {
+            if mem_info.size_bits.is_some() {
+                result.push(self.mem_space_used(problem, mem) as i64);
+            }
+        }
+
+        result
+    }
+
     /// A state is better than another state if the second state can be reached from the first one
     /// by only taking useless or harmful actions. The exhaustive list of these actions is:
     /// * burn an arbitrary positive amount of energy
@@ -882,6 +914,7 @@ impl State {
 
         // value chosen to use approximately half of the bits
         // TODO using ordered tuples would be a lot better here
+        // TODO switch to making all normal time and energy values i32 so they're guaranteed to fit here? or i128
         const M: i64 = i32::MAX as i64;
 
         let minimum_time_left = self.minimum_time - self.curr_time;
@@ -980,5 +1013,21 @@ impl Dominance for Cost {
 
         dom_early_check!(dom);
         dom.finish()
+    }
+}
+
+impl std::ops::Add for Cost {
+    type Output = Cost;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Cost { time: self.time + rhs.time, energy: self.energy + rhs.energy }
+    }
+}
+
+impl std::ops::Sub for Cost {
+    type Output = Cost;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Cost { time: self.time - rhs.time, energy: self.energy - rhs.energy }
     }
 }
