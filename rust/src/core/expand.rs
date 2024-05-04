@@ -51,6 +51,7 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
 }
 
 // TODO instead of early dropping, only drop if we actually need more space?
+//   alternatively, prune value drops that didn't end up being necessary
 #[inline(never)]
 fn expand_try_drop(problem: &Problem, state: &State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?

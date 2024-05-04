@@ -421,8 +421,9 @@ impl State {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
+        let time_start = self.curr_time;
         self.curr_time = time_end;
-        self.actions_taken.push(Action::Wait(ActionWait { time: TimeRange { start: self.curr_time, end: time_end}}));
+        self.actions_taken.push(Action::Wait(ActionWait { time: TimeRange { start: time_start, end: time_end } }));
 
         // TODO avoid cloning these in the first place!
         // TODO do these before or after completing the operations? probably before, since them mem usage is highest

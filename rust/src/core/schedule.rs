@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use crate::core::problem::{Allocation, Channel, Memory, Node};
 use crate::core::wrapper::Time;
 
@@ -34,11 +35,17 @@ pub struct ActionDrop {
     pub mem: Memory,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct TimeRange {
     pub start: Time,
     /// exclusive
     pub end: Time,
+}
+
+impl Debug for TimeRange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TimeRange({:?}..{:?})", self.start, self.end)
+    }
 }
 
 impl TimeRange {

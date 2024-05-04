@@ -272,6 +272,12 @@ impl State {
             writeln!(f, "  minimum_time={}", s.minimum_time.0)?;
             writeln!(f)?;
 
+            writeln!(f, "Actions:")?;
+            for a in &s.actions_taken {
+                writeln!(f, "  {:?}", a)?;
+            }
+            writeln!(f)?;
+
             writeln!(f, "Memory:")?;
             for (mem, mem_info) in &hardware.memories {
                 writeln!(f, "  memory '{}': used {}/{:?}", &mem_info.id, s.mem_space_used(problem, mem), mem_info.size_bits)?;
@@ -290,44 +296,44 @@ impl State {
             writeln!(f, "  everything: {}", s.trigger_everything)?;
 
             let trigger_group_free_str = s.trigger_group_free.iter().filter(|(_, &t)| t)
-                .map(|(g, _)| format!("group '{}'", hardware.groups[g].id))
-                .join(", ");
-            writeln!(f, "  group_free: {}", trigger_group_free_str)?;
+                .map(|(g, _)| format!("    group '{}'", hardware.groups[g].id))
+                .join("\n");
+            writeln!(f, "  group_free:\n{}", trigger_group_free_str)?;
 
             let trigger_value_mem_available_str = s.trigger_value_mem_available.iter().flat_map(|(v, mems)| {
                 mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
             }).map(|(v, m)| {
                 let value_info = &graph.nodes[v];
                 let mem_info = &hardware.memories[m];
-                format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
-            }).join(", ");
-            writeln!(f, "  value_mem_available: {}", trigger_value_mem_available_str)?;
+                format!("    value '{}' in memory '{}'", value_info.id, mem_info.id)
+            }).join("\n");
+            writeln!(f, "  value_mem_available:\n{}", trigger_value_mem_available_str)?;
 
             let trigger_value_mem_unlocked = s.trigger_value_mem_unlocked_or_read.iter().flat_map(|(v, mems)| {
                 mems.iter().filter(|(_, &t)| t).map(move |(m, _)| (v, m))
             }).map(|(v, m)| {
                 let value_info = &graph.nodes[v];
                 let mem_info = &hardware.memories[m];
-                format!("value '{}' in memory '{}'", value_info.id, mem_info.id)
-            }).join(", ");
-            writeln!(f, "  value_mem_unlocked: {}", trigger_value_mem_unlocked)?;
+                format!("    value '{}' in memory '{}'", value_info.id, mem_info.id)
+            }).join("\n");
+            writeln!(f, "  value_mem_unlocked:\n{}", trigger_value_mem_unlocked)?;
 
             let trigger_mem_usage_decreased_str = s.trigger_mem_usage_decreased.iter().filter_map(|(v, mems)| {
                 mems.map(move |delta| (v, delta))
             }).map(|(v, delta)| {
                 let mem_info = &hardware.memories[v];
-                format!("memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
-            }).join(", ");
-            writeln!(f, "  mem_usage_decreased: {}", trigger_mem_usage_decreased_str)?;
+                format!("    memory '{}' from {} to {}", mem_info.id, delta.0, delta.1)
+            }).join("\n");
+            writeln!(f, "  mem_usage_decreased:\n{}", trigger_mem_usage_decreased_str)?;
 
             let trigger_value_live_count_increased_str = s.trigger_value_live_count_increased.iter().filter_map(|(v, &increased)| {
                 if increased {
-                    Some(format!("value '{}'", graph.nodes[v].id))
+                    Some(format!("    value '{}'", graph.nodes[v].id))
                 } else {
                     None
                 }
-            }).join(", ");
-            writeln!(f, "  value_live_count_increased: {}", trigger_value_live_count_increased_str)?;
+            }).join("\n");
+            writeln!(f, "  value_live_count_increased:\n{}", trigger_value_live_count_increased_str)?;
 
             Ok(())
         }
