@@ -1,21 +1,25 @@
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionDrop};
-use crate::core::state::{SkippedDropInfo, State, ValueState};
+use crate::core::state::{EarliestPruneReason, SkippedDropInfo, State, ValueState};
+use crate::util::float::min_option;
 
 #[inline(never)]
-pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
+#[must_use]
+pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State) -> Option<EarliestPruneReason>) -> Option<EarliestPruneReason> {
     // drop dead values
     //   this needs to be done after every action, not just after waiting:
     //   actions might have made duplicate values in other memories dead
-    if state.drop_dead_values(problem).is_err() {
+    if let Err(reason) = state.drop_dead_values(problem) {
         // prune, unused value turns out to be dead (so it should not have been created anyway)
         // TODO instead of pruning, recursively subtract all the costs associated with it and just continue?
         //   maybe even go back and add all partial states?
-        return;
+        return Some(reason);
     }
 
     // TODO where to call this exactly?
     state.prune_skipped_actions(problem);
+
+    let mut reason = None;
     
     // drop non-dead values
     // TODO only drop dead values if necessary for the actions that are starting at the current time?
@@ -26,17 +30,17 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
         if mem_info.size_bits.is_none() {
             continue;
         }
-        expand_try_drop(problem, &mut state, next, mem);
+        reason = min_option(reason, expand_try_drop(problem, &mut state, next, mem));
     }
 
     // maybe start core operations
     for alloc in problem.allocations.keys() {
-        expand_try_alloc(problem, &mut state, next, alloc);
+        reason = min_option(reason, expand_try_alloc(problem, &mut state, next, alloc));
     }
 
     // maybe start channel operations
     for channel in problem.hardware.channels.keys() {
-        expand_try_channel(problem, &mut state, next, channel);
+        reason = min_option(reason, expand_try_channel(problem, &mut state, next, channel));
     }
 
     // wait for first operation to finish
@@ -45,23 +49,33 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
         let mut state_next = state.clone();
         match state_next.do_action_wait(problem, first_done_time) {
             // success, continue with the next state
-            Ok(_) => next(state_next),
+            Ok(()) => {
+                reason = min_option(reason, next(state_next));
+            },
             // pruned, don't do anything
-            Err(_) => {}
+            Err(r) => {
+                reason = min_option(reason, Some(r));
+            }
         }
     }
+
+    reason
 }
 
 // TODO instead of early dropping, only drop if we actually need more space?
 //   alternatively, prune value drops that didn't end up being necessary
 #[inline(never)]
-fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), mem: Memory) {
+#[must_use]
+fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(State) -> Option<EarliestPruneReason>, mem: Memory) -> Option<EarliestPruneReason> {
+    let mut reason = None;
+    
     // TODO switch to indexmap for deterministic iteration order?
     for value in problem.graph.nodes.keys() {
         let action = ActionDrop { mem, value };
 
         // check if action should be tried 
-        if state.skipped_drops.contains_key(&action) {
+        if let Some(prev) = state.skipped_drops.get(&action) {
+            reason = min_option(reason, Some(EarliestPruneReason(prev.time)));
             continue;
         }
         if !state.could_start_action_now(problem, Action::Drop(action)) {
@@ -71,7 +85,7 @@ fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(S
         // do action
         let mut state_next = state.clone();
         state_next.drop_value(problem, mem, value);
-        expand(problem, state_next, next);
+        reason = min_option(reason, expand(problem, state_next, next));
 
         // don't do action, mark as skipped
         let info = SkippedDropInfo {
@@ -85,55 +99,72 @@ fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(S
         let prev = state.skipped_drops.insert(action, info);
         assert!(prev.is_none());
     }
+
+    reason
 }
 
 #[inline(never)]
-fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), alloc: Allocation) {
+#[must_use]
+fn expand_try_alloc(problem: &Problem, state: &mut State, next: &mut impl FnMut(State) -> Option<EarliestPruneReason>, alloc: Allocation) -> Option<EarliestPruneReason> {
+    let mut reason = None;
+    
     // check if action can run
-    if state.skipped_allocs.contains_key(&alloc) {
-        return;
+    if let Some(info) = state.skipped_allocs.get(&alloc) {
+        reason = min_option(reason, Some(EarliestPruneReason(info.start)));
+        return reason;
     }
     if !state.could_start_action_now(problem, Action::Core(alloc)) {
-        return;
+        return reason;
     }
 
     // do action
     let mut time_range = None;
     let state_next = state.clone_and_then(|n| time_range = Some(n.do_action_core(problem, alloc)));
-    expand(problem, state_next, next);
+    reason = min_option(reason, expand(problem, state_next, next));
 
     // don't do action, mark as skipped
     let prev = state.skipped_allocs.insert(alloc, time_range.unwrap()).is_none();
     assert!(prev);
+
+    reason
 }
 
 #[inline(never)]
-fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel) {
+#[must_use]
+fn expand_try_channel(problem: &Problem, state: &mut State, next: &mut impl FnMut(State) -> Option<EarliestPruneReason>, channel: Channel) -> Option<EarliestPruneReason> {
+    let mut reason = None;
+    
     // check that channel is actually free before going through the following loops
     let channel_info = &problem.hardware.channels[channel];
     if state.state_group[channel_info.group].is_some() {
-        return;
+        return reason;
     }
 
     // TODO switch to indexmap for deterministic iteration order, instead of this slower loop-and-check workaround
     for value in problem.graph.nodes.keys() {
         if state.state_memory_node[channel_info.mem_source].contains_key(&value) {
-            expand_try_channel_transfer(problem, state, next, channel, value);
+            reason = min_option(reason, expand_try_channel_transfer(problem, state, next, channel, value));
         }
     }
+
+    reason
 }
 
 #[inline(never)]
-fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), channel: Channel, value: Node) {
+#[must_use]
+fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut impl FnMut(State) -> Option<EarliestPruneReason>, channel: Channel, value: Node) -> Option<EarliestPruneReason> {
+    let mut reason = None;
+    
     let action = ActionChannel { channel, value };
 
     // check if action can run
-    if state.skipped_transfers.contains_key(&action) {
-        return;
+    if let Some(info) = state.skipped_transfers.get(&action) {
+        reason = min_option(reason, Some(EarliestPruneReason(info.start)));
+        return reason;
     }
     let action = ActionChannel { channel, value };
     if !state.could_start_action_now(problem, Action::Channel(action)) {
-        return;
+        return reason;
     }
 
     // do action
@@ -141,9 +172,11 @@ fn expand_try_channel_transfer(problem: &Problem, state: &mut State, next: &mut 
     let state_next = state.clone_and_then(|n| {
         time_range = Some(n.do_action_channel(problem, action))
     });
-    expand(problem, state_next, next);
+    reason = min_option(reason, expand(problem, state_next, next));
 
     // don't do action, mark as skipped
     let prev = state.skipped_transfers.insert(action, time_range.unwrap());
     assert!(prev.is_none());
+
+    reason
 }

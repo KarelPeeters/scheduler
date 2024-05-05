@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 pub trait IterFloatExt: Iterator {
     fn min_f64(self) -> Option<Self::Item>;
     fn max_f64(self) -> Option<Self::Item>;
@@ -44,4 +46,12 @@ pub fn max_f64(a: f64, b: f64) -> f64 {
         return b;
     }
     f64::max(a, b)
+}
+
+pub fn min_option<T: Ord>(a: Option<T>, b: Option<T>) -> Option<T> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(min(a, b)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
 }

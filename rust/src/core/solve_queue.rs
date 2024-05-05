@@ -82,7 +82,8 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
             queue.push(OrdState::new(problem, target, next_state));
         };
 
-        expand(problem, state, &mut next);
+        // expand(problem, state, &mut next);
+        todo!()
     }
 
     // println!("Partial frontier stats:");

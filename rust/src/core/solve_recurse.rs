@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+
 use itertools::Itertools;
+
 use crate::core::expand::expand;
 use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
 use crate::core::problem::{CostTarget, Problem};
-use crate::core::state::{Cost, State};
+use crate::core::state::{Cost, EarliestPruneReason, State};
 
 pub trait ReporterRecurse {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State);
@@ -39,18 +41,25 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
     let result = recurse(&mut ctx, state, 10);
 
     println!("Recursion result:");
-    for r in result.to_vec() {
-        println!("{:?}", r);
+    println!("  prune: {:?}", result.earliest_prune_reason);
+    println!("  frontier:");
+    for r in result.frontier.to_vec() {
+        println!("    {:?}", r);
     }
 
     frontier_done
 }
 
+struct RecurseResult {
+    frontier: CostFrontier,
+    earliest_prune_reason: Option<EarliestPruneReason>,
+}
+
 #[inline(never)]
-fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -> CostFrontier {
+fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -> RecurseResult {
     // TODO prevent infinite recursion with stack
     if depth == 0 {
-        return CostFrontier::empty();
+        return RecurseResult { earliest_prune_reason: None, frontier: CostFrontier::empty() };
     }
 
     let problem = ctx.problem;
@@ -59,8 +68,9 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -
     // bookkeeping
     // TODO if not idle just cancel all those non-idle actions and report the better solution we get from it,
     //   similar to the idea to improve the pruning in the other place?
+    let curr_time = state.curr_time;
     if state.is_done(problem) {
-        assert_eq!(state.curr_time, state.minimum_time);
+        assert_eq!(curr_time, state.minimum_time);
 
         let cost = state.current_cost();
         let added_done = ctx.frontier_done.add(&cost, &ctx.target, || state.clone());
@@ -68,12 +78,13 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -
             ctx.reporter.report_new_schedule(problem, ctx.frontier_done, cost, &state);
         }
 
-        return CostFrontier::single(Cost::default());
+        return RecurseResult { earliest_prune_reason: None, frontier: CostFrontier::single(Cost::default()) };
     }
 
     let achievement = state.achievement(problem);
     if let Some(prev) = ctx.cache.get(&achievement) {
-        return prev.clone();
+        // println!("Cache hit");
+        return RecurseResult { earliest_prune_reason: None, frontier: prev.clone() };
     }
 
     // pruning
@@ -90,22 +101,28 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -
 
     ctx.reporter.report_new_state(problem, ctx.frontier_partial, &state);
 
-    let mut frontier = CostFrontier::empty();
+    let mut curr_frontier = CostFrontier::empty();
     let curr_cost = state.current_cost();
 
-    expand(problem, state, &mut |next_state| {
+    let earliest_prune_reason = expand(problem, state, &mut |next_state| {
         let next_cost = next_state.current_cost();
-        let next_frontier = recurse(ctx, next_state, depth - 1);
+        let RecurseResult { earliest_prune_reason, frontier } = recurse(ctx, next_state, depth - 1);
 
-        for c in next_frontier.iter() {
-            frontier.add(ctx.target, c + next_cost - curr_cost);
+        for c in frontier.iter() {
+            curr_frontier.add(ctx.target, c + next_cost - curr_cost);
         }
+
+        earliest_prune_reason
     });
 
-    let prev = ctx.cache.insert(achievement, frontier.clone());
-    // assert!(prev.is_none());
+    // only insert if allowed by prune reason
+    if earliest_prune_reason.map_or(true, |earliest_prune_reason| curr_time < earliest_prune_reason.0) {
+        // println!("Inserting into cache");
+        let prev = ctx.cache.insert(achievement, curr_frontier.clone());
+        assert!(prev.is_none());
+    }
 
-    frontier
+    RecurseResult { frontier: curr_frontier, earliest_prune_reason }
 }
 
 #[derive(Clone)]

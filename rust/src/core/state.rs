@@ -9,6 +9,7 @@ use crate::core::problem::{Allocation, CostTarget, Group, Memory, Node, Problem}
 use crate::core::schedule::{Action, ActionChannel, ActionDrop, Timed, TimeRange};
 use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::dom_early_check;
+use crate::util::float::min_option;
 
 #[derive(Clone)]
 pub struct State {
@@ -34,6 +35,9 @@ pub struct State {
     pub skipped_transfers: HashMap<ActionChannel, TimeRange>,
     pub skipped_drops: HashMap<ActionDrop, SkippedDropInfo>,
 }
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct EarliestPruneReason(pub Time);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct SkippedDropInfo {
@@ -482,7 +486,7 @@ impl State {
         time
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> Result<(), ()> {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> Result<(), EarliestPruneReason> {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -490,7 +494,9 @@ impl State {
         self.curr_time = time_end;
 
         // complete operations
-        let mut symmetry_break = false;
+        // TODO do we want the min or max prune time here? does it matter?
+        //   should this interact with pruning at all?
+        let mut symmetry_break = None;
 
         for group in problem.hardware.groups.keys() {
             if let Some(claim) = self.state_group[group] {
@@ -508,26 +514,24 @@ impl State {
                         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
 
                         // symmetry breaking
-                        if !symmetry_break {
-                            for &other_action in &self.actions_taken {
-                                if let Action::Core(other_alloc) = other_action.inner {
-                                    let other_info = &problem.allocations[other_alloc];
+                        for &other_action in &self.actions_taken {
+                            if let Action::Core(other_alloc) = other_action.inner {
+                                let other_info = &problem.allocations[other_alloc];
 
-                                    // only break symmetry within group
-                                    if alloc_info.group != other_info.group {
-                                        continue
-                                    }
-                                    // check symmetry condition break
-                                    if alloc >= other_alloc {
-                                        continue
-                                    }
+                                // only break symmetry within group
+                                if alloc_info.group != other_info.group {
+                                    continue
+                                }
+                                // check symmetry condition break
+                                if alloc >= other_alloc {
+                                    continue
+                                }
 
-                                    let curr_timed = Timed { time: claim.time, inner: alloc };
-                                    let other_timed = Timed { time: other_action.time, inner: other_alloc };
-                                    if self.could_swap_core_actions(problem, curr_timed, other_timed) {
-                                        symmetry_break = true;
-                                        break;
-                                    }
+                                let curr_timed = Timed { time: claim.time, inner: alloc };
+                                let other_timed = Timed { time: other_action.time, inner: other_alloc };
+                                if self.could_swap_core_actions(problem, curr_timed, other_timed) {
+                                    symmetry_break = min_option(symmetry_break, Some(other_action.time.start));
+                                    break;
                                 }
                             }
                         }
@@ -538,7 +542,6 @@ impl State {
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
 
                         // symmetry breaking
-                        if !symmetry_break {
                             for &other_timed in &self.actions_taken {
                                 if let Action::Channel(other_action) = other_timed.inner {
                                     let other_info = &problem.hardware.channels[other_action.channel];
@@ -555,10 +558,9 @@ impl State {
                                     let curr_timed = Timed { time: claim.time, inner: action };
                                     let other_timed = Timed { time: other_timed.time, inner: other_action };
                                     if self.could_swap_channel_actions(problem, curr_timed, other_timed) {
-                                        symmetry_break = true;
+                                        symmetry_break = min_option(symmetry_break, Some(other_timed.time.start));
                                         break;
                                     }
-                                }
                             }
                         }
                     }
@@ -568,10 +570,9 @@ impl State {
             }
         }
 
-        if symmetry_break {
-            Err(())
-        } else {
-            Ok(())
+        match symmetry_break {
+            None => Ok(()),
+            Some(time) => Err(EarliestPruneReason(time)),
         }
     }
 
@@ -640,20 +641,20 @@ impl State {
         could_swap
     }
 
-    pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
+    pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), EarliestPruneReason> {
         // TODO remove this, it's just a temporary hack until proper time pruning starts working
         // Note: Don't drop dead values in inf sized memories, it's useless and makes future liveness checking 
         //   for symmetries harder. We still loop through everything to make sure we didn't do any 
         //   useless dead value transfers.
 
         let mut actions_to_push = vec![];
-        let mut exit = false;
+        let mut exit = None;
 
         for (mem, mem_info) in &problem.hardware.memories {
             let mem_content = &mut self.state_memory_node[mem];
 
             mem_content.retain(|&value, &mut availability| {
-                if let ValueState::AvailableNow { read_lock_count, read_count, since: _ } = availability {
+                if let ValueState::AvailableNow { read_lock_count, read_count, since } = availability {
                     let dead = self.value_remaining_unstarted_uses[value] == 0;
 
                     if read_lock_count > 0 || !dead {
@@ -663,7 +664,7 @@ impl State {
 
                     if read_count == 0 {
                         // dead but never read, prune this state
-                        exit = true;
+                        exit = min_option(exit, Some(since));
                         return true;
                     }
                     
@@ -692,12 +693,10 @@ impl State {
             self.push_action(problem, a);
         }
 
-        // TODO earlier exit? is it important that we push the actions?
-        if exit {
-            return Err(());
+        match exit {
+            None => Ok(()),
+            Some(time) => Err(EarliestPruneReason(time)),
         }
-
-        Ok(())
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
