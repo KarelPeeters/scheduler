@@ -23,31 +23,31 @@ impl SolveMethod {
 }
 
 pub trait CommonReporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, state: &State);
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State);
+    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, state: &State);
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: Option<&mut LinearFrontier>, queue: Option<&BinaryHeap<OrdState>>, state: &State);
 }
 
 impl<R: CommonReporter> ReporterQueue for R {
     #[inline(never)]
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, cost: Cost, state: &State) {
-        self.report_new_schedule(problem, frontier, cost, state)
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, state: &State) {
+        self.report_new_schedule(problem, frontier, state)
     }
 
     #[inline(never)]
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State) {
-        self.report_new_state(problem, frontier_partial, Some(queue), state)
+        self.report_new_state(problem, Some(frontier_partial), Some(queue), state)
     }
 }
 
 impl<R: CommonReporter> ReporterRecurse for R {
     #[inline(never)]
-    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State) {
-        self.report_new_schedule(problem, frontier_done, cost, schedule)
+    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, schedule: &State) {
+        self.report_new_schedule(problem, frontier_done, schedule)
     }
 
     #[inline(never)]
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, state: &State) {
-        self.report_new_state(problem, frontier_partial, None, state)
+    fn report_new_state(&mut self, problem: &Problem, state: &State) {
+        self.report_new_state(problem, None, None, state)
     }
 }
 
@@ -55,6 +55,6 @@ impl<R: CommonReporter> ReporterRecurse for R {
 pub struct DummyReporter;
 
 impl CommonReporter for DummyReporter {
-    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: Cost, _: &State) {}
-    fn report_new_state(&mut self, _: &Problem, _: &mut LinearFrontier, _: Option<&BinaryHeap<OrdState>>, _: &State) {}
+    fn report_new_schedule(&mut self, _: &Problem, _: &Frontier<Cost, State>, _: &State) {}
+    fn report_new_state(&mut self, _: &Problem, _: Option<&mut LinearFrontier>, _: Option<&BinaryHeap<OrdState>>, _: &State) {}
 }

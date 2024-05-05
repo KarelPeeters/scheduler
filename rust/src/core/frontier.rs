@@ -35,8 +35,14 @@ pub struct Frontier<K, V> {
 }
 
 impl<K, V> Frontier<K, V> {
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         Self { entries: vec![], first_index: None, last_index: None, dominance_calculations: 0, count_add_try: 0, count_add_success: 0, count_add_removed: 0 }
+    }
+
+    pub fn single(k: K, v: V) -> Self {
+        let mut result = Self::empty();
+        result.add_entry(k, v, true);
+        result
     }
 
     pub fn len(&self) -> usize {
@@ -45,6 +51,14 @@ impl<K, V> Frontier<K, V> {
 
     pub fn iter_arbitrary(&self) -> impl Iterator<Item=(&K, &V)> {
         self.entries.iter().map(|e| (&e.key, &e.value))
+    }
+
+    pub fn into_iter_arbitrary(self) -> impl Iterator<Item=(K, V)> {
+        self.entries.into_iter().map(|e| (e.key, e.value))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item=&K> {
+        self.iter_arbitrary().map(|(k, _)| k)
     }
 
     pub fn iter_lru(&self) -> impl Iterator<Item=(&K, &V)> {
@@ -347,7 +361,7 @@ mod test {
     // TODO fuzz testing
     #[test]
     fn basic() {
-        let mut frontier = Frontier::new();
+        let mut frontier = Frontier::empty();
 
         frontier.add_entry(0, 0, true);
         frontier.add_entry(1, 1, true);
@@ -364,7 +378,7 @@ mod test {
 
     #[test]
     fn fuzz_test() {
-        let mut frontier = Frontier::new();
+        let mut frontier = Frontier::empty();
         let mut rng = SmallRng::seed_from_u64(0);
 
         let max_size = 10;

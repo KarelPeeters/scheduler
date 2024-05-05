@@ -8,7 +8,7 @@ use crate::core::problem::{CostTarget, Problem};
 use crate::core::state::{Cost, State};
 
 pub trait ReporterQueue {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, cost: Cost, schedule: &State);
+    fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, schedule: &State);
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: &BinaryHeap<OrdState>, state: &State);
 }
 
@@ -16,7 +16,7 @@ pub trait ReporterQueue {
 pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterQueue) -> Frontier<Cost, State> {
     let root_state = State::new(problem);
 
-    let mut frontier_done = Frontier::new();
+    let mut frontier_done = Frontier::empty();
     let mut frontier_partial = LinearFrontier::new(root_state.dom_key_min(problem, target).1);
 
     // TODO why only by cost and not by the full pareto key?
@@ -25,7 +25,7 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
     // add root state
     if root_state.is_done(problem) {
         assert!(frontier_done.add(&root_state.current_cost(), &target, || root_state.clone()));
-        reporter.report_new_schedule(problem, &frontier_done, root_state.current_cost(), &root_state);
+        reporter.report_new_schedule(problem, &frontier_done, &root_state);
         return frontier_done;
     }
     queue.push(OrdState::new(problem, target, root_state));
@@ -67,7 +67,7 @@ pub fn solve_queue(problem: &Problem, target: CostTarget, reporter: &mut impl Re
             if next_state.is_done(problem) {
                 let was_added = frontier_done.add(&next_state.current_cost(), &target, || next_state.clone());
                 if was_added {
-                    reporter.report_new_schedule(problem, &frontier_done, next_state.current_cost(), &next_state);
+                    reporter.report_new_schedule(problem, &frontier_done, &next_state);
                 }
                 return;
             }

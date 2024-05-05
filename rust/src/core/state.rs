@@ -427,7 +427,7 @@ impl State {
                     None | Some(ValueState::AvailableAtTime(_)) => {
                         return false;
                     }
-                    Some(&ValueState::AvailableNow { read_lock_count, read_count, since: _ }) => {
+                    Some(&ValueState::AvailableNow { read_lock_count, read_count: _, since: _ }) => {
                         // can't drop locked value
                         if read_lock_count != 0 {
                             return false;
@@ -462,11 +462,22 @@ impl State {
         time
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) {
+    // TODO make other functions non-public?
+    pub fn do_action(&mut self, problem: &Problem, action: Action) -> TimeRange {
+        match action {
+            Action::Wait(delta) => self.do_action_wait(problem, delta + self.curr_time),
+            Action::Core(alloc) => self.do_action_core(problem, alloc),
+            Action::Channel(action) => self.do_action_channel(problem, action),
+            Action::Drop(action) => self.do_action_drop(problem, action),
+        }
+    }
+
+    // TODO change this to consistently be delta
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> TimeRange {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
-        self.push_action(problem, Action::Wait(time_end - self.curr_time));
+        let time_range = self.push_action(problem, Action::Wait(time_end - self.curr_time));
         self.curr_time = time_end;
 
         // complete operations
@@ -477,6 +488,7 @@ impl State {
                     continue
                 }
 
+                // TODO fix available time to be the end of the claim, not the current time
                 match claim.inner {
                     GroupClaim::Core(alloc) => {
                         let alloc_info = &problem.allocations[alloc];
@@ -495,6 +507,8 @@ impl State {
                 self.release_group(group);
             }
         }
+
+        time_range
     }
 
     // TODO use curr time or time from the action?
@@ -563,42 +577,47 @@ impl State {
     }
 
     pub fn drop_dead_values(&mut self, problem: &Problem) {
-        let mut actions_to_push = vec![];
+        let mut drops = vec![];
 
-        for mem in problem.hardware.memories.keys() {
-            let mem_content = &mut self.state_memory_node[mem];
-
-            mem_content.retain(|&value, &mut availability| {
+        for (mem, info) in &self.state_memory_node {
+            for (&value, &availability) in info {
                 match availability {
                     ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
-                        if read_lock_count > 0 || self.value_remaining_unstarted_uses[value] > 0 {
-                            // alive, keep
-                            return true;
+                        if read_lock_count == 0 && self.value_remaining_unstarted_uses[value] == 0 {
+                            // TODO do back in time and drop after last usage? mostly to get nicer memory plots
+                            drops.push(ActionDrop { mem, value });
                         }
-
-                        // dead, drop
-                        // TODO go back in time and drop at end of last usage? mostly for plotting clarity
-                        //   (and actually important for proper memory savings)
-                        actions_to_push.push(Action::Drop(ActionDrop { value, mem }));
-
-                        let live_count = &mut self.value_live_count[value];
-                        assert!(*live_count > 0);
-                        *live_count -= 1;
-
-                        false
                     }
-                    ValueState::AvailableAtTime(_) => true,
+                    ValueState::AvailableAtTime(_) => {},
                 }
-            });
+            };
         }
 
-        for a in actions_to_push {
-            self.push_action(problem, a);
+        for a in drops {
+            self.do_action_drop(problem, a);
         }
     }
 
+    fn do_action_drop(&mut self, problem: &Problem, action: ActionDrop) -> TimeRange {
+        let time_range = self.push_action(problem, Action::Drop(action));
+        let ActionDrop { mem, value } = action;
+
+        let prev = self.state_memory_node[mem].remove(&value);
+        assert!(
+            matches!(prev, Some(ValueState::AvailableNow { read_lock_count: 0, read_count: _, since: _ })),
+            "Can't do drop {:?} with availability {:?}",
+            action, prev,
+        );
+
+        let live_count = &mut self.value_live_count[value];
+        assert!(*live_count > 0);
+        *live_count -= 1;
+
+        time_range
+    }
+
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
-        let time = self.push_action(problem, Action::Core(alloc));
+        let time_range = self.push_action(problem, Action::Core(alloc));
 
         let alloc_info = &problem.allocations[alloc];
         let node_info = &problem.graph.nodes[alloc_info.node];
@@ -611,24 +630,24 @@ impl State {
 
             self.add_mem_value_read_lock(input_value, input_mem);
         }
-        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time.end));
-        self.claim_group(alloc_info.group, time, GroupClaim::Core(alloc));
+        self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableAtTime(time_range.end));
+        self.claim_group(alloc_info.group, time_range, GroupClaim::Core(alloc));
 
-        time
+        time_range
     }
 
     pub fn do_action_channel(&mut self, problem: &Problem, action: ActionChannel) -> TimeRange {
-        let time = self.push_action(problem, Action::Channel(action));
+        let time_range = self.push_action(problem, Action::Channel(action));
 
         let ActionChannel { channel, value } = action;
         let channel_info = &problem.hardware.channels[channel];
         assert!(self.value_mem_availability(value, channel_info.mem_dest).is_none());
 
         self.add_mem_value_read_lock(value, channel_info.mem_source);
-        self.mark_mem_value_available(value, channel_info.mem_dest, ValueState::AvailableAtTime(time.end));
-        self.claim_group(channel_info.group, time, GroupClaim::Channel(action));
+        self.mark_mem_value_available(value, channel_info.mem_dest, ValueState::AvailableAtTime(time_range.end));
+        self.claim_group(channel_info.group, time_range, GroupClaim::Channel(action));
 
-        time
+        time_range
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {

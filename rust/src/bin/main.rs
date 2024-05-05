@@ -130,7 +130,7 @@ struct CustomReporter {
 }
 
 impl CommonReporter for CustomReporter {
-    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, _cost: Cost, state: &State) {
+    fn report_new_schedule(&mut self, problem: &Problem, frontier: &Frontier<Cost, State>, state: &State) {
         let index = self.next_done_index;
         self.next_done_index += 1;
 
@@ -159,22 +159,24 @@ impl CommonReporter for CustomReporter {
         frontier.write_svg_to_file(&self.old_frontier_costs, "ignored/schedules/frontier.svg").unwrap();
     }
 
-    fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
+    fn report_new_state(&mut self, problem: &Problem, frontier_partial: Option<&mut LinearFrontier>, queue: Option<&BinaryHeap<OrdState>>, state: &State) {
         self.state_counter += 1;
 
         if self.partial_plot_frequency != 0 && self.state_counter % self.partial_plot_frequency == 0 {
             let index = self.next_partial_index;
             self.next_partial_index += 1;
 
-            let queue_len = queue.map(|q| q.len());
-            let success = frontier_partial.add_success as f64 / frontier_partial.add_calls as f64;
-            let dropped = frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64;
-            let checked = frontier_partial.entries_checked as f64 / frontier_partial.add_calls as f64;
-            println!(
-                "Partial state: index={}: queue_len={:?}, frontier_len={}, success={:.04}, dropped={:.04}, checked={:.04}",
-                index, queue_len, frontier_partial.len(), success, dropped, checked
-            );
-            frontier_partial.clear_stats();
+            if let Some(frontier_partial) = frontier_partial {
+                let queue_len = queue.map(|q| q.len());
+                let success = frontier_partial.add_success as f64 / frontier_partial.add_calls as f64;
+                let dropped = frontier_partial.add_dropped_old as f64 / frontier_partial.add_calls as f64;
+                let checked = frontier_partial.entries_checked as f64 / frontier_partial.add_calls as f64;
+                println!(
+                    "Partial state: index={}: queue_len={:?}, frontier_len={}, success={:.04}, dropped={:.04}, checked={:.04}",
+                    index, queue_len, frontier_partial.len(), success, dropped, checked
+                );
+                frontier_partial.clear_stats();
+            }
 
             // let depths = format!("{:?}", frontier_partial.collect_entry_depths());
             // std::fs::write("ignored/depths_linear.txt", &depths).unwrap();

@@ -506,7 +506,7 @@ mod test {
         let mut rng = thread_rng();
         let mut frontier = LinearFrontier::new(dimensions);
 
-        let mut baseline = Frontier::new();
+        let mut baseline = Frontier::empty();
 
         let mut total_gen = 0.0;
         let mut total_add_new = 0.0;

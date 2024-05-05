@@ -651,7 +651,7 @@ mod test {
         let mut rng = SmallRng::seed_from_u64(0);
         let mut frontier = NewFrontier::new(dimensions, max_leaf_len);
 
-        let mut baseline  = Frontier::new();
+        let mut baseline = Frontier::empty();
         
         let mut total_gen = 0.0;
         let mut total_add_new = 0.0;
