@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use itertools::Itertools;
 use crate::core::expand::expand;
@@ -11,13 +12,18 @@ pub trait ReporterRecurse {
     fn report_new_state(&mut self, problem: &Problem, frontier_partial: &mut LinearFrontier, state: &State);
 }
 
+enum CacheEntry {
+    Placeholder,
+    Completed(CostFrontier),
+}
+
 pub struct Context<'p, 'r, 'f, R: ReporterRecurse> {
     problem: &'p Problem,
     target: CostTarget,
     reporter: &'r mut R,
     frontier_done: &'f mut Frontier<Cost, State>,
     frontier_partial: &'f mut LinearFrontier,
-    cache: &'f mut HashMap<Vec<i64>, CostFrontier>
+    cache: &'f mut HashMap<Vec<i64>, CacheEntry>
 }
 
 pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterRecurse) -> Frontier<Cost, State> {
@@ -36,7 +42,7 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
         cache: &mut cache,
     };
 
-    let result = recurse(&mut ctx, state, 10);
+    let result = recurse(&mut ctx, state);
 
     println!("Recursion result:");
     for r in result.to_vec() {
@@ -47,12 +53,7 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
 }
 
 #[inline(never)]
-fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -> CostFrontier {
-    // TODO prevent infinite recursion with stack
-    if depth == 0 {
-        return CostFrontier::empty();
-    }
-
+fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFrontier {
     let problem = ctx.problem;
     state.assert_valid(problem);
 
@@ -72,8 +73,19 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -
     }
 
     let achievement = state.achievement(problem);
-    if let Some(prev) = ctx.cache.get(&achievement) {
-        return prev.clone();
+    match ctx.cache.entry(achievement.clone()) {
+        Entry::Occupied(entry) => {
+            return match entry.get() {
+                // hit loop, which is useless
+                CacheEntry::Placeholder => CostFrontier::empty(),
+                // cache hit
+                CacheEntry::Completed(frontier) => frontier.clone(),
+            }
+        }
+        Entry::Vacant(entry) => {
+            // first time seeing this state, mark for loop detection
+            entry.insert(CacheEntry::Placeholder);
+        }
     }
 
     // pruning
@@ -95,16 +107,16 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -
 
     expand(problem, state, &mut |next_state| {
         let next_cost = next_state.current_cost();
-        let next_frontier = recurse(ctx, next_state, depth - 1);
+        let next_frontier = recurse(ctx, next_state);
 
         for c in next_frontier.iter() {
             frontier.add(ctx.target, c + next_cost - curr_cost);
         }
     });
 
-    let prev = ctx.cache.insert(achievement, frontier.clone());
-    // assert!(prev.is_none());
-
+    let prev = ctx.cache.insert(achievement, CacheEntry::Completed(frontier.clone()));
+    assert!(matches!(prev, Some(CacheEntry::Placeholder)));
+    
     frontier
 }
 

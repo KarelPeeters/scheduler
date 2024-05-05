@@ -27,12 +27,6 @@ pub struct State {
 
     pub unstarted_nodes: HashSet<Node>,
     pub value_remaining_unstarted_uses: TypedVec<Node, u32>,
-
-    // filtering (attempt -> most recent time start)
-    // TODO combine into single hashmap?
-    pub skipped_allocs: HashMap<Allocation, TimeRange>,
-    pub skipped_transfers: HashMap<ActionChannel, TimeRange>,
-    pub skipped_drops: HashMap<ActionDrop, SkippedDropInfo>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -110,9 +104,6 @@ impl State {
             value_live_count,
             unstarted_nodes,
             value_remaining_unstarted_uses,
-            skipped_allocs: HashMap::new(),
-            skipped_transfers: HashMap::new(),
-            skipped_drops: HashMap::new(),
         }
     }
 
@@ -339,14 +330,7 @@ impl State {
         assert!(*live_count > 0);
         *live_count -= 1;
 
-        // record action
-        self.actions_taken.push(Timed {
-            time: TimeRange::instant(self.curr_time),
-            inner: Action::Drop(ActionDrop {
-                value,
-                mem,
-            }),
-        });
+        self.push_action(problem, Action::Drop(ActionDrop { mem, value }));
     }
 
     fn claim_group(&mut self, group: Group, time: TimeRange, claim: GroupClaim) {
@@ -382,11 +366,13 @@ impl State {
                     return false;
                 }
 
-                for &after in &node_info.start_after {
-                    if !self.is_node_started(after) {
-                        return false;
-                    }
-                }
+                // TODO add after limiting again?
+                //   does the achievement contain enough information that this should be allowed?
+                // for &after in &node_info.start_after {
+                //     if !self.is_node_started(after) {
+                //         return false;
+                //     }
+                // }
 
                 if !self.check_group_free(alloc_info.group) {
                     return false;
@@ -450,12 +436,6 @@ impl State {
                         // TODO instead of this assert, prune states with dead values that are still being copied or calculated
                         assert!(!self.is_dead_value(value), "dead values should have been dropped already");
 
-                        // it doesn't make sense to drop unread values, they should have never been created
-                        // TODO prune and delete? or does that just create duplicate states for no reason?
-                        if read_count == 0 {
-                            return false;
-                        }
-
                         // don't drop last instance of live value
                         if !self.check_not_single_live_instance(value) {
                             return false;
@@ -482,7 +462,7 @@ impl State {
         time
     }
 
-    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) -> Result<(), ()> {
+    pub fn do_action_wait(&mut self, problem: &Problem, time_end: Time) {
         // metadata
         assert!(time_end >= self.curr_time);
         assert!(time_end <= self.minimum_time);
@@ -490,8 +470,6 @@ impl State {
         self.curr_time = time_end;
 
         // complete operations
-        let mut symmetry_break = false;
-
         for group in problem.hardware.groups.keys() {
             if let Some(claim) = self.state_group[group] {
                 if claim.time.end > time_end {
@@ -506,72 +484,16 @@ impl State {
                             self.release_mem_value_read_lock(input_value, input_mem);
                         }
                         self.mark_mem_value_available(alloc_info.node, alloc_info.output_memory, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
-
-                        // symmetry breaking
-                        if !symmetry_break {
-                            for &other_action in &self.actions_taken {
-                                if let Action::Core(other_alloc) = other_action.inner {
-                                    let other_info = &problem.allocations[other_alloc];
-
-                                    // only break symmetry within group
-                                    if alloc_info.group != other_info.group {
-                                        continue
-                                    }
-                                    // check symmetry condition break
-                                    if alloc >= other_alloc {
-                                        continue
-                                    }
-
-                                    let curr_timed = Timed { time: claim.time, inner: alloc };
-                                    let other_timed = Timed { time: other_action.time, inner: other_alloc };
-                                    if self.could_swap_core_actions(problem, curr_timed, other_timed) {
-                                        symmetry_break = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
                     }
                     GroupClaim::Channel(action) => {
                         let channel_info = &problem.hardware.channels[action.channel];
                         self.release_mem_value_read_lock(action.value, channel_info.mem_source);
                         self.mark_mem_value_available(action.value, channel_info.mem_dest, ValueState::AvailableNow { read_lock_count: 0, read_count: 0, since: time_end });
-
-                        // symmetry breaking
-                        if !symmetry_break {
-                            for &other_timed in &self.actions_taken {
-                                if let Action::Channel(other_action) = other_timed.inner {
-                                    let other_info = &problem.hardware.channels[other_action.channel];
-
-                                    // only break symmetry within group
-                                    if channel_info.group != other_info.group {
-                                        continue;
-                                    }
-                                    // check symmetry condition break
-                                    if (action.channel, action.value) >= (other_action.channel, other_action.value) {
-                                        continue
-                                    }
-
-                                    let curr_timed = Timed { time: claim.time, inner: action };
-                                    let other_timed = Timed { time: other_timed.time, inner: other_action };
-                                    if self.could_swap_channel_actions(problem, curr_timed, other_timed) {
-                                        symmetry_break = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
                 self.release_group(group);
             }
-        }
-
-        if symmetry_break {
-            Err(())
-        } else {
-            Ok(())
         }
     }
 
@@ -640,50 +562,32 @@ impl State {
         could_swap
     }
 
-    pub fn drop_dead_values(&mut self, problem: &Problem) -> Result<(), ()> {
-        // TODO remove this, it's just a temporary hack until proper time pruning starts working
-        // Note: Don't drop dead values in inf sized memories, it's useless and makes future liveness checking 
-        //   for symmetries harder. We still loop through everything to make sure we didn't do any 
-        //   useless dead value transfers.
-
+    pub fn drop_dead_values(&mut self, problem: &Problem) {
         let mut actions_to_push = vec![];
-        let mut exit = false;
 
-        for (mem, mem_info) in &problem.hardware.memories {
+        for mem in problem.hardware.memories.keys() {
             let mem_content = &mut self.state_memory_node[mem];
 
             mem_content.retain(|&value, &mut availability| {
-                if let ValueState::AvailableNow { read_lock_count, read_count, since: _ } = availability {
-                    let dead = self.value_remaining_unstarted_uses[value] == 0;
+                match availability {
+                    ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
+                        if read_lock_count > 0 || self.value_remaining_unstarted_uses[value] > 0 {
+                            // alive, keep
+                            return true;
+                        }
 
-                    if read_lock_count > 0 || !dead {
-                        // not (really) dead, keep
-                        return true;
+                        // dead, drop
+                        // TODO go back in time and drop at end of last usage? mostly for plotting clarity
+                        //   (and actually important for proper memory savings)
+                        actions_to_push.push(Action::Drop(ActionDrop { value, mem }));
+
+                        let live_count = &mut self.value_live_count[value];
+                        assert!(*live_count > 0);
+                        *live_count -= 1;
+
+                        false
                     }
-
-                    if read_count == 0 {
-                        // dead but never read, prune this state
-                        exit = true;
-                        return true;
-                    }
-                    
-                    if mem_info.size_bits.is_none() {
-                        // don't bother _actually_ dropping, we just wanted the dead check
-                        return true;
-                    }
-
-                    // dead and read at some point, drop
-                    // TODO go back in time and drop at end of last usage? mostly for plotting clarity
-                    //   (and actually important for proper memory savings)
-                    actions_to_push.push(Action::Drop(ActionDrop { value, mem }));
-
-                    let live_count = &mut self.value_live_count[value];
-                    assert!(*live_count > 0);
-                    *live_count -= 1;
-
-                    false
-                } else {
-                    true
+                    ValueState::AvailableAtTime(_) => true,
                 }
             });
         }
@@ -691,13 +595,6 @@ impl State {
         for a in actions_to_push {
             self.push_action(problem, a);
         }
-
-        // TODO earlier exit? is it important that we push the actions?
-        if exit {
-            return Err(());
-        }
-
-        Ok(())
     }
 
     pub fn do_action_core(&mut self, problem: &Problem, alloc: Allocation) -> TimeRange {
@@ -732,110 +629,6 @@ impl State {
         self.claim_group(channel_info.group, time, GroupClaim::Channel(action));
 
         time
-    }
-
-    // TODO update this comment, the current details are probably fundamentally wrong
-    // TODO this function should be called after every pushed action, not just after waiting
-    // TODO use "there has to be a justification to run the action now instead of earlier"
-    /// Prune the "skipped" action lists.
-    /// An action should be dropped iff any of:
-    ///   * Some new actions that have started after the action under consideration cause the action to
-    ///       no longer be possible in its original timeslot.
-    ///       * eg. the group is being used for a different action
-    ///       * eg. the output no longer fits in the output memory
-    ///           (continuously from when the action would have started until now)
-    ///   * The action is not longer relevant and will no longer be tried anyway,
-    ///       This is just a memory saving trick and does not matter for correctness.
-    ///       * eg. the output value is now dead
-    ///
-    /// *Implementation note*: All of these properties only need to be checked for the current situation, since
-    /// this function will be called repeatedly.
-    pub fn prune_skipped_actions(&mut self, problem: &Problem) {
-        // TODO this could also be done more incrementally instead of in this central place, but that's more brittle
-
-        let mut skipped_drops = std::mem::take(&mut self.skipped_drops);
-        skipped_drops.retain(|&action, &mut info| {
-            let ActionDrop { value, mem } = action;
-
-            match self.value_mem_availability(value, mem) {
-                None => {
-                    // this must mean that it is dead, since it can't have been dropped
-                    //   (it would have been blocked by skipped_drops)
-                    assert!(self.is_dead_value(value));
-                    // no need to keep skips for dead values around
-                    false
-                }
-                Some(ValueState::AvailableAtTime(_)) => {
-                    // was deleted at some point and will reappear, allow dropping again
-                    false
-                }
-                Some(ValueState::AvailableNow { read_count, .. }) => {
-                    // still available, only allow dropping again if the value was actually used
-                    // TODO careful, this will interact strangely if we prevent dropping too much at some point
-
-                    assert!(read_count >= info.read_count);
-                    let used_after_previous = read_count > info.read_count;
-                    !used_after_previous
-                }
-            }
-        });
-        assert!(self.skipped_drops.is_empty());
-        self.skipped_drops = skipped_drops;
-
-        let mut skipped_transfers = std::mem::take(&mut self.skipped_transfers);
-        skipped_transfers.retain(|&action, &mut time| {
-            let ActionChannel { channel, value } = action;
-
-            // dead
-            if self.is_dead_value(value) {
-                return false;
-            }
-
-            // overlap
-            let channel_info = &problem.hardware.channels[channel];
-            if let Some(claim) = self.state_group[channel_info.group] {
-                if claim.time.overlaps(time) {
-                    return false;
-                }
-            }
-
-            // fit
-            if !self.check_mem_space_available(problem, channel_info.mem_dest, problem.graph.nodes[value].size_bits) {
-                return false;
-            }
-
-            // keep
-            true
-        });
-        assert!(self.skipped_transfers.is_empty());
-        self.skipped_transfers = skipped_transfers;
-
-        let mut skipped_allocs = std::mem::take(&mut self.skipped_allocs);
-        skipped_allocs.retain(|&alloc, &mut time| {
-            let alloc_info = &problem.allocations[alloc];
-
-            // dead
-            if !self.unstarted_nodes.contains(&alloc_info.node) {
-                return false;
-            }
-
-            // overlap
-            if let Some(claim) = self.state_group[alloc_info.group] {
-                if claim.time.overlaps(time) {
-                    return false;
-                }
-            }
-
-            // fit
-            if !self.check_mem_space_available(problem, alloc_info.output_memory, problem.graph.nodes[alloc_info.node].size_bits) {
-                return false;
-            }
-
-            // keep
-            true
-        });
-        assert!(self.skipped_allocs.is_empty());
-        self.skipped_allocs = skipped_allocs;
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {
@@ -875,14 +668,6 @@ impl State {
         for mem in problem.hardware.memories.keys() {
             for value in problem.graph.nodes.keys() {
                 result.push(self.value_mem_dom_key_min(value, mem));
-            }
-        }
-
-        // TODO this can probably be removed for achievement
-        // memory space (less used is better for memories with limited size)
-        for (mem, mem_info) in &problem.hardware.memories {
-            if mem_info.size_bits.is_some() {
-                result.push(self.mem_space_used(problem, mem) as i64);
             }
         }
 

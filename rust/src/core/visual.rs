@@ -280,6 +280,12 @@ impl State {
             }
             writeln!(f)?;
 
+            writeln!(f, "Groups:")?;
+            for (group, state) in s.state_group.iter() {
+                writeln!(f, "{:?} {:?}", group, state)?;
+            }
+            writeln!(f)?;
+
             writeln!(f, "Memory:")?;
             for (mem, mem_info) in &hardware.memories {
                 writeln!(f, "  memory '{}': used {}/{:?}", &mem_info.id, s.mem_space_used(problem, mem), mem_info.size_bits)?;
@@ -293,17 +299,6 @@ impl State {
                 }
             }
             writeln!(f)?;
-
-            writeln!(f, "Skipped:")?;
-            for (alloc, time) in &s.skipped_allocs {
-                writeln!(f, "  {:?} {:?}", alloc, time)?;
-            }
-            for (action, time) in &s.skipped_transfers {
-                writeln!(f, "  {:?} {:?}", action, time)?;
-            }
-            for (action, info) in &s.skipped_drops {
-                writeln!(f, "  {:?} {:?}", action, info)?;
-            }
 
             Ok(())
         }
