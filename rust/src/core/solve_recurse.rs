@@ -49,7 +49,12 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
         println!("{:?}", r);
     }
 
-    frontier_done
+    // TODO actually recover states
+    let mut clean = Frontier::new();
+    for (&c, _) in result.inner.iter_arbitrary() {
+        assert!(clean.add(&c, &target, || State::new(problem)));
+    }
+    clean
 }
 
 #[inline(never)]
