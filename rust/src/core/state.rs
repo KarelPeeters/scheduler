@@ -663,7 +663,10 @@ impl State {
             Some(ValueState::AvailableNow { .. }) => 0,
             // available later
             // TODO subtract current time here?
-            Some(ValueState::AvailableAtTime(time)) => (time - self.curr_time).0,
+            Some(ValueState::AvailableAtTime(time)) => {
+                assert!(time > self.curr_time);
+                (time - self.curr_time).0
+            }
             // not even scheduled, worst case
             // TODO is that really true? what if we decide to schedule a state afterwards?
             None => i64::MAX,

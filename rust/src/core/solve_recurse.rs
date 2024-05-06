@@ -1,11 +1,13 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::format;
 use itertools::{Itertools, rev};
 use crate::core::expand::expand;
 use crate::core::frontier::Frontier;
 use crate::core::problem::{CostTarget, Problem};
 use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
+use unwrap_match::unwrap_match;
 
 pub trait ReporterRecurse {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, schedule: &State);
@@ -52,6 +54,20 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
 
     // it only makes sense to report done states at the end
     ctx.reporter.report_new_schedule(problem, &clean, &State::new(problem));
+
+    println!("Recurse final cache size: {}", cache.len());
+
+    println!("Cache contents:");
+    for (k, v) in &cache {
+        let v = match(v) {
+            CacheEntry::Placeholder => unreachable!(),
+            CacheEntry::Completed(v) => v,
+        };
+        let k_str = format!("{:?}", k);
+        let k_str = k_str.replace(&i64::MIN.to_string(), "-inf");
+        let k_str = k_str.replace(&i64::MAX.to_string(), "inf");
+        println!("  {} {:?}", k_str, v.to_sorted_vec());
+    }
 
     clean
 }

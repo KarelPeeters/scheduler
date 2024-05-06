@@ -18,11 +18,11 @@ use rust::examples::params::{CrossBranches, test_problem, TestGraphParams, TestH
 fn main() {
     let problem = test_problem(
         TestGraphParams {
-            depth: 2,
+            depth: 1,
             branches: 2,
             cross: CrossBranches::Never,
             node_size: 500,
-            weight_size: None,
+            weight_size: Some(500),
             share_weights: false,
             constrain_order: false,
         },
@@ -30,7 +30,7 @@ fn main() {
             core_count: 2,
             share_group: false,
             mem_size_ext: None,
-            mem_size_int: Some(2000),
+            mem_size_int: Some(1500),
             channel_cost_ext: DEFAULT_CHANNEL_COST_EXT,
             channel_cost_int: DEFAULT_CHANNEL_COST_INT,
         },
@@ -38,7 +38,7 @@ fn main() {
     );
     let target = CostTarget::Full;
     let method = SolveMethod::Recurse;
-    let partial_plot_frequency = 1000;
+    let partial_plot_frequency = 1;
     
     main_solver(&problem, target, method, partial_plot_frequency);
 }

@@ -117,6 +117,7 @@ dependencies = [
  "ordered-float",
  "poloto",
  "rand",
+ "unwrap-match",
 ]
 
 [[package]]
@@ -124,6 +125,12 @@ name = "tagu"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddb6b06d20fba9ed21fca3d696ee1b6e870bca0bcf9fa2971f6ae2436de576a"
+
+[[package]]
+name = "unwrap-match"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "593c0b76584ce9fef70bf7fc4d3034f7a3578ab3e22fd617dd84407689ca1839"
 
 [[package]]
 name = "wasi"
