@@ -40,29 +40,13 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
 
     let result = recurse(&mut ctx, state);
 
-    println!("Recursion result:");
-    for r in result.to_sorted_vec() {
-        println!("{:?}", r);
-    }
-
     // TODO change state representation to be much more minimal and orthogonal to action list
     let mut clean = Frontier::empty();
     for (&c, actions) in result.iter_arbitrary() {
         let mut state = State::new(problem);
-
-        println!("reconstructing state");
-        for a in actions {
-            println!("  p {:?}", a);
-        }
-
-        println!("running actions");
         for &a in actions {
-            println!("{}", state.summary_string(problem));
-
-            println!("  r {:?}", a);
             state.do_action(problem, a);
         }
-
         assert!(clean.add(&c, &target, || state));
     }
 

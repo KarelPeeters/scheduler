@@ -651,10 +651,11 @@ impl State {
     }
 
     fn value_mem_dom_key_min(&self, value: Node, mem: Memory) -> i64 {
-        if self.is_dead_value(value) {
-            // dead, best possible case
-            return i64::MIN;
-        }
+        // TODO re-enable this after fixing the dropping bug during state reconstruction
+        // if self.is_dead_value(value) {
+        //     // dead, best possible case
+        //     return i64::MIN;
+        // }
 
         match self.value_mem_availability(value, mem) {
             // available now
