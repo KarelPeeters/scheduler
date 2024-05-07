@@ -1,10 +1,14 @@
+use std::collections::HashSet;
+use std::fmt::Write;
+
 use itertools::{enumerate, Itertools};
 use rouille::{Request, Response};
-use std::fmt::Write;
 
 use crate::core::expand::expand;
 use crate::core::problem::Problem;
+use crate::core::schedule::{Action, ActionChannel, ActionDrop};
 use crate::core::state::State;
+use crate::core::wrapper::TypedIndex;
 
 pub fn main_server(problem: Problem) {
     rouille::start_server("localhost:8000", move |request| {
@@ -76,19 +80,66 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
     state.write_svg_to(problem, &mut svg).unwrap();
     let svg = String::from_utf8(svg).unwrap();
 
+    let str_summary = state.summary_string(problem);
+    let html_summary = format!(r#"<div id="text" style="white-space: pre; font-family: monospace">{str_summary}</div>"#);
+
+    let mut possible_actions = HashSet::new();
+    for child in children {
+        possible_actions.extend(
+            child.actions_taken.iter()
+                .map(|a| a.inner)
+                .filter(|a| !matches!(a, Action::Wait(_)))
+        );
+    }
+    let possible_actions = possible_actions.iter().sorted().collect_vec();
+
+    let action_cols = possible_actions.iter().map(|a| {
+        let s = match a {
+            Action::Wait(_) => unreachable!(),
+            Action::Core(alloc) => format!("A{}", alloc.to_index()),
+            Action::Channel(ActionChannel { channel, value }) => format!("C{}V{}", channel.to_index(), value.to_index()),
+            Action::Drop(ActionDrop { value, mem }) => format!("D{}M{}", value.to_index(), mem.to_index()),
+        };
+        format!("<th>{s}</th>")
+    }).join("");
+
     let mut html_children = String::new();
     let f = &mut html_children;
 
-    writeln!(f, "<table>").unwrap();
-    writeln!(f, "<tr><th>Actions</th><th>Time</th><th>Link</th></tr>").unwrap();
+    writeln!(f, "<table class=\"table\">").unwrap();
+    writeln!(f, "<tr><th>Link</th>{action_cols}<th>Time</th></tr>").unwrap();
     if let Some(parent_state) = parent_state {
         let delta = (parent_state.curr_time - state.curr_time).0;
-        writeln!(f, "<tr><td>back</td><td>{delta}</td><td><a href=\"../\">back</a></td></tr>").unwrap();
+        let dummy_cols = "<td></td>".repeat(possible_actions.len());
+        writeln!(f, "<tr><td><a href=\"../\">back</a></td>{dummy_cols}<td>{delta}</td></tr>").unwrap();
     }
+
     for (child_index, child) in enumerate(children) {
-        let actions_str = child.actions_taken.iter().map(|a| format!("{:?}", a.inner)).join("<p>");
-        let delta = (child.curr_time - state.curr_time).0;
-        writeln!(f, "<tr><td>{actions_str}</td><td>{delta}</td><td><a href=\"./{child_index}/\">{child_index}</a></td></tr>").unwrap();
+        let new_non_time_actions = &child.actions_taken[state.actions_taken.len()..child.actions_taken.len() - 1];
+
+        let mut hits = 0;
+        let checked_cols = possible_actions.iter().map(|&&a| {
+            let hit = match new_non_time_actions.iter().filter(|n| n.inner == a).count() {
+                0 => false,
+                1 => true,
+                _ => unreachable!(),
+            };
+            let s = if hit {
+                hits += 1;
+                "<input type=\"checkbox\" checked disabled/>"
+            } else {
+                ""
+            };
+            format!("<td>{s}</td>")
+        }).join("");
+        assert_eq!(hits, new_non_time_actions.len());
+
+        let delta = match child.actions_taken.last().unwrap().inner {
+            Action::Wait(delta) => delta.0,
+            _ => unreachable!(),
+        };
+
+        writeln!(f, "<tr><td><a href=\"./{child_index}/\">{child_index}</a></td>{checked_cols}<td>{delta}</td></tr>").unwrap();
     }
     writeln!(f, "</table>").unwrap();
 
@@ -96,8 +147,21 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         r#"
         <!DOCTYPE html>
         <html lang="en">
-        {svg}
-        {html_children}
+            <head>
+                <style type="text/css">
+                    .table {{ background-color:#eee;border-collapse:collapse; }}
+                    .table th {{ background-color:#222;color:white; }}
+                    .table td, .table th {{ padding:5px;border:1px solid #000; }}
+                    .table td {{ text-align: center; }}
+                    .table tr td:first-child {{ text-align: right; }}
+                    .table tr td:last-child {{ text-align: right; }}
+                </style>
+            </head>
+            <body>
+                {svg}
+                {html_summary}
+                {html_children}
+            </body>
         </html>
         "#,
     )

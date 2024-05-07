@@ -57,17 +57,17 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
 
     println!("Recurse final cache size: {}", cache.len());
 
-    println!("Cache contents:");
-    for (k, v) in &cache {
-        let v = match(v) {
-            CacheEntry::Placeholder => unreachable!(),
-            CacheEntry::Completed(v) => v,
-        };
-        let k_str = format!("{:?}", k);
-        let k_str = k_str.replace(&i64::MIN.to_string(), "-inf");
-        let k_str = k_str.replace(&i64::MAX.to_string(), "inf");
-        println!("  {} {:?}", k_str, v.to_sorted_vec());
-    }
+    // println!("Cache contents:");
+    // for (k, v) in &cache {
+    //     let v = match(v) {
+    //         CacheEntry::Placeholder => unreachable!(),
+    //         CacheEntry::Completed(v) => v,
+    //     };
+    //     let k_str = format!("{:?}", k);
+    //     let k_str = k_str.replace(&i64::MIN.to_string(), "-inf");
+    //     let k_str = k_str.replace(&i64::MAX.to_string(), "inf");
+    //     println!("  {} {:?}", k_str, v.to_sorted_vec());
+    // }
 
     clean
 }

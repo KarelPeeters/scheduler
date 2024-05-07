@@ -8,7 +8,7 @@ pub struct Timed<T> {
     pub inner: T,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Action {
     Wait(Time),
     Core(Allocation),
@@ -16,13 +16,13 @@ pub enum Action {
     Drop(ActionDrop)
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ActionChannel {
     pub channel: Channel,
     pub value: Node,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ActionDrop {
     pub value: Node,
     pub mem: Memory,

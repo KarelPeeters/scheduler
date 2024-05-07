@@ -90,7 +90,9 @@ fn main_milp(problem: &Problem) {
 }
 
 fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, partial_plot_frequency: u64) {
+    let _ = std::fs::remove_dir_all("ignored/hardware/");
     let _ = std::fs::remove_dir_all("ignored/schedules/");
+    std::fs::create_dir_all("ignored/hardware/").unwrap();
     std::fs::create_dir_all("ignored/schedules/done/").unwrap();
     std::fs::create_dir_all("ignored/schedules/partial/").unwrap();
     std::fs::create_dir_all("ignored/schedules/frontier/").unwrap();
