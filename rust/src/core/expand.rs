@@ -36,8 +36,9 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
     // wait for first operation to finish
     // we only do this after core and channel operations to get extra pruning form actions we've chosen _not_ to take
     if let Some(first_done_time) = state.first_done_time() {
-        let mut state_next = state.clone();
-        state_next.do_action_wait(problem, first_done_time);
+        let state_next = state.clone_and_then(|n| {
+            let _ = n.do_action_wait(problem, first_done_time);
+        });
         next(state_next);
     }
 }
@@ -57,8 +58,7 @@ fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(S
         }
 
         // do action
-        let mut state_next = state.clone();
-        state_next.drop_value(problem, mem, value);
+        let state_next = state.clone_and_then(|n| n.drop_value(problem, mem, value));
         expand(problem, state_next, next);
     }
 }

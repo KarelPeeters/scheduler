@@ -286,6 +286,9 @@ impl State {
             writeln!(f, "  curr_time={}", s.curr_time.0)?;
             writeln!(f, "  curr_energy={}", s.curr_energy.0)?;
             writeln!(f, "  minimum_time={}", s.minimum_time.0)?;
+            writeln!(f, "  is_done={}", s.is_done(problem))?;
+            writeln!(f, "  is_idle={}", s.is_idle())?;
+            writeln!(f, "  has_achieved_output_placements={}", s.has_achieved_output_placements(problem))?;
             writeln!(f)?;
 
             writeln!(f, "Actions:")?;

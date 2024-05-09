@@ -113,6 +113,13 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         format!("<th>{s}</th>")
     }).join("");
 
+    let filter_cols = (0..possible_actions.len())
+        .map(|i| format!("<td><input id=\"filter_{i}\" type=\"checkbox\" onclick=\"update();\"/></td>"))
+        .join("");
+    let enable_cols = (0..possible_actions.len())
+        .map(|i| format!("<td><input id=\"enable_{i}\"type=\"checkbox\" onclick=\"update();\"/></td>"))
+        .join("");
+
     let mut html_children = String::new();
     let f = &mut html_children;
 
@@ -123,6 +130,8 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         let dummy_cols = "<td></td>".repeat(possible_actions.len());
         writeln!(f, "<tr><td><a href=\"../\">back</a></td>{dummy_cols}<td>{delta}</td></tr>").unwrap();
     }
+    writeln!(f, "<tr><td>Filter value</td>{filter_cols}<td></td></tr>").unwrap();
+    writeln!(f, "<tr><td>Filter enable</td>{enable_cols}<td></td></tr>").unwrap();
 
     // TODO separate rendering for mandatory actions (eg. dead value drops)
     //   maybe extend to all actions that don't have alternatives?
@@ -130,7 +139,7 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         let child_actions = &child.actions_taken[state_actions_len..];
 
         let mut hits = 0;
-        let checked_cols = possible_actions.iter().map(|&a| {
+        let checked_cols = possible_actions.iter().enumerate().map(|(action_index, &a)| {
             let hit = match child_actions.iter().filter(|n| &n.inner == a).count() {
                 0 => false,
                 1 => true,
@@ -138,9 +147,9 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
             };
             let s = if hit {
                 hits += 1;
-                "<input type=\"checkbox\" checked disabled/>"
+                format!("<input id=\"check_{}_{}\" type=\"checkbox\" checked disabled/>", child_index, action_index)
             } else {
-                ""
+                "".to_string()
             };
             format!("<td>{s}</td>")
         }).join("");
@@ -151,9 +160,12 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
             _ => unreachable!(),
         };
 
-        writeln!(f, "<tr><td><a href=\"./{child_index}/\">{child_index}</a></td>{checked_cols}<td>{delta}</td></tr>").unwrap();
+        writeln!(f, "<tr id=\"row_{child_index}\"><td><a href=\"./{child_index}/\">{child_index}</a></td>{checked_cols}<td>{delta}</td></tr>").unwrap();
     }
     writeln!(f, "</table>").unwrap();
+
+    let child_count = children.len();
+    let action_count = possible_actions.len();
 
     format!(
         r#"
@@ -174,6 +186,29 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
                 {html_summary}
                 {html_children}
             </body>
+            <script>
+                function update() {{
+                    for (let row = 0; row < {child_count}; row++) {{
+                        let match = true;
+                        for (let col = 0; col < {action_count}; col++) {{
+                            const enabled = document.getElementById(`enable_${{col}}`).checked;
+                            const expected = document.getElementById(`filter_${{col}}`).checked;
+                            const actual = document.getElementById(`check_${{row}}_${{col}}`) !== null;
+                            if (enabled && (expected !== actual)) {{
+                                match = false;
+                                break;
+                            }}
+                        }}
+                
+                        const elem_row = document.getElementById(`row_${{row}}`);
+                        if (match) {{
+                            elem_row.style.display = "table-row";
+                        }} else {{
+                            elem_row.style.display = "none";
+                        }}
+                    }}
+                }}
+            </script>
         </html>
         "#,
     )
