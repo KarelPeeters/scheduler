@@ -6,7 +6,7 @@ use rouille::{Request, Response};
 
 use crate::core::expand::expand;
 use crate::core::problem::Problem;
-use crate::core::schedule::{Action, ActionChannel, ActionDrop};
+use crate::core::schedule::{Action, ActionChannel, ActionDrop, Timed};
 use crate::core::state::State;
 use crate::core::wrapper::TypedIndex;
 
@@ -68,7 +68,12 @@ fn pick_state(problem: &Problem, indices: &[u64]) -> Result<(Option<State>, Stat
     }
 
     let mut children = vec![];
-    expand(problem, curr.clone(), &mut |c| children.push(c));
+    expand(problem, curr.clone(), &mut |c| {
+        // TODO remove check once expand stops generating duplicates
+        if !children.contains(&c) {
+            children.push(c)
+        }
+    });
 
     Ok((prev, curr, children))
 }
@@ -83,12 +88,17 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
     let str_summary = state.summary_string(problem);
     let html_summary = format!(r#"<div id="text" style="white-space: pre; font-family: monospace">{str_summary}</div>"#);
 
+    let state_actions_len = state.actions_taken.len();
+
     let mut possible_actions = HashSet::new();
     for child in children {
+        let child_non_time_actions = &child.actions_taken[state_actions_len..child.actions_taken.len() - 1];
         possible_actions.extend(
-            child.actions_taken.iter()
-                .map(|a| a.inner)
-                .filter(|a| !matches!(a, Action::Wait(_)))
+            child_non_time_actions.iter()
+                .map(|a| {
+                    assert!(!matches!(a.inner, Action::Wait(_)));
+                    a.inner
+                })
         );
     }
     let possible_actions = possible_actions.iter().sorted().collect_vec();
@@ -114,12 +124,14 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         writeln!(f, "<tr><td><a href=\"../\">back</a></td>{dummy_cols}<td>{delta}</td></tr>").unwrap();
     }
 
+    // TODO separate rendering for mandatory actions (eg. dead value drops)
+    //   maybe extend to all actions that don't have alternatives?
     for (child_index, child) in enumerate(children) {
-        let new_non_time_actions = &child.actions_taken[state.actions_taken.len()..child.actions_taken.len() - 1];
+        let child_actions = &child.actions_taken[state_actions_len..];
 
         let mut hits = 0;
-        let checked_cols = possible_actions.iter().map(|&&a| {
-            let hit = match new_non_time_actions.iter().filter(|n| n.inner == a).count() {
+        let checked_cols = possible_actions.iter().map(|&a| {
+            let hit = match child_actions.iter().filter(|n| &n.inner == a).count() {
                 0 => false,
                 1 => true,
                 _ => unreachable!(),
@@ -132,7 +144,7 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
             };
             format!("<td>{s}</td>")
         }).join("");
-        assert_eq!(hits, new_non_time_actions.len());
+        assert_eq!(hits, child_actions.len() - 1);
 
         let delta = match child.actions_taken.last().unwrap().inner {
             Action::Wait(delta) => delta.0,

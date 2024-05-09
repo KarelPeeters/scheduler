@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter};
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::wrapper::{Energy, Time};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Timed<T> {
     pub time: TimeRange,
     pub inner: T,
@@ -29,7 +29,7 @@ pub struct ActionDrop {
 }
 
 // TODO move next to Time
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct TimeRange {
     pub start: Time,
     /// exclusive

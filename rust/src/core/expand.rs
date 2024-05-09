@@ -2,6 +2,8 @@ use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::schedule::{Action, ActionChannel, ActionDrop};
 use crate::core::state::State;
 
+// TODO deduplicate again, now that "tried actions" have been removed
+//   either reintroduce them as within-expand mini state, or rely on the recurse cache to fix it?
 #[inline(never)]
 pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State)) {
     // drop dead values
@@ -42,6 +44,7 @@ pub fn expand(problem: &Problem, mut state: State, next: &mut impl FnMut(State))
 
 // TODO instead of early dropping, only drop if we actually need more space?
 //   alternatively, prune value drops that didn't end up being necessary
+// TODO can we just implicitly treat all states as having possibly dropped all existing values?
 #[inline(never)]
 fn expand_try_drop(problem: &Problem, state: &mut State, next: &mut impl FnMut(State), mem: Memory) {
     // TODO switch to indexmap for deterministic iteration order?

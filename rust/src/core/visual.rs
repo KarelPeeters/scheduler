@@ -20,7 +20,7 @@ impl State {
         let time_max = self.minimum_time.0 as f64;
 
         let row_height = 70.0;
-        let padding_left = 150.0;
+        let padding_left = 180.0;
         let padding_right = 50.0;
         let padding_ver = 50.0;
         let tick_size = 10.0;
@@ -60,8 +60,15 @@ impl State {
                 f,
                 "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
                 x = padding_left / 10.0,
+                y = y + row_height / 2.0 - 20.0,
+                t = format!("{:?}", group),
+            )?;
+            writeln!(
+                f,
+                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
+                x = padding_left / 10.0 + 10.0,
                 y = y + row_height / 2.0,
-                t = group_info.id,
+                t = format!("'{}'", group_info.id),
             )?;
 
             if group.to_index() != 0 {
@@ -202,15 +209,22 @@ impl State {
                 f,
                 "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
                 x = padding_left / 10.0,
+                y = y + row_height / 2.0 - 20.0,
+                t = format!("{:?}", mem),
+            )?;
+            writeln!(
+                f,
+                "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start' font-weight='bold'>{t}</text>",
+                x = padding_left / 10.0 + 10.0,
                 y = y + row_height / 2.0,
-                t = mem_info.id,
+                t = format!("'{}'", mem_info.id),
             )?;
 
             let limit_str = mem_info.size_bits.map_or("".to_string(), |s| format!("/{s}"));
             writeln!(
                 f,
                 "<text x='{x}' y='{y}' dominant-baseline='middle' text-anchor='start'>{t}</text>",
-                x = padding_left / 10.0,
+                x = padding_left / 10.0 + 10.0,
                 y = y + row_height / 2.0 + 20.0,
                 t = format!("peak {max_bits}{limit_str}"),
             )?;
@@ -282,19 +296,19 @@ impl State {
 
             writeln!(f, "Groups:")?;
             for (group, state) in s.state_group.iter() {
-                writeln!(f, "{:?} {:?}", group, state)?;
+                writeln!(f, "  {:?} '{}': {:?}", group, hardware.groups[group].id, state)?;
             }
             writeln!(f)?;
 
             writeln!(f, "Memory:")?;
             for (mem, mem_info) in &hardware.memories {
-                writeln!(f, "  memory '{}': used {}/{:?}", &mem_info.id, s.mem_space_used(problem, mem), mem_info.size_bits)?;
+                writeln!(f, "  {:?} '{}': used {}/{:?}", mem, &mem_info.id, s.mem_space_used(problem, mem), mem_info.size_bits)?;
 
                 // iterate ourselves to keep order
                 for value in graph.nodes.keys() {
                     if let Some(state) = s.state_memory_node[mem].get(&value) {
                         let value_info = &graph.nodes[value];
-                        writeln!(f, "    contains '{}' with size {}, state {:?}", value_info.id, value_info.size_bits, state)?;
+                        writeln!(f, "    contains {:?} '{}' with size {}, state {:?}", value, value_info.id, value_info.size_bits, state)?;
                     }
                 }
             }
