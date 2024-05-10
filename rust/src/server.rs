@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
 
 use itertools::{enumerate, Itertools};
@@ -6,17 +6,19 @@ use rouille::{Request, Response};
 
 use crate::core::expand::expand;
 use crate::core::problem::Problem;
-use crate::core::schedule::{Action, ActionChannel, ActionDrop, Timed};
+use crate::core::schedule::{Action, ActionChannel, ActionDrop};
+use crate::core::solve_recurse::RecurseCache;
 use crate::core::state::State;
 use crate::core::wrapper::TypedIndex;
 
-pub fn main_server(problem: Problem) {
+pub fn main_server(problem: Problem, recurse_cache: Option<RecurseCache>) {
+    println!("Starting server");
     rouille::start_server("localhost:8000", move |request| {
-        handle_request(&problem, request)
+        handle_request(&problem, recurse_cache.as_ref(), request)
     });
 }
 
-fn handle_request(problem: &Problem, request: &Request) -> Response {
+fn handle_request(problem: &Problem, cache: Option<&RecurseCache>, request: &Request) -> Response {
     let url = request.url();
     let path = url.strip_prefix("/").unwrap()
         .trim_end_matches("/")
@@ -37,7 +39,7 @@ fn handle_request(problem: &Problem, request: &Request) -> Response {
                 Err(_) => return Response::empty_404(),
             };
 
-            Response::html(build_html(problem, &indices, parent.as_ref(), &state, &children))
+            Response::html(build_html(problem, cache, &indices, parent.as_ref(), &state, &children))
         }
         _ => Response::empty_404(),
     };
@@ -78,15 +80,63 @@ fn pick_state(problem: &Problem, indices: &[u64]) -> Result<(Option<State>, Stat
     Ok((prev, curr, children))
 }
 
-fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, state: &State, children: &[State]) -> String {
+fn indices_for_target(problem: &Problem, target: &State) -> Vec<u64> {
+    let mut result = vec![];
+
+    loop {
+        let (_, curr, children) = pick_state(problem, &result).unwrap();
+        if curr.actions_taken.len() == target.actions_taken.len() {
+            break;
+        }
+
+        let mut found = false;
+        for (child_index, child) in enumerate(&children) {
+            if target.actions_taken.get(..child.actions_taken.len()) == Some(&child.actions_taken[..]) {
+                result.push(child_index as u64);
+                found = true;
+                break;
+            }
+        }
+
+        assert!(found);
+    }
+
+    // TODO assert achievement match
+    assert_eq!(&pick_state(problem, &result).unwrap().1.actions_taken, &target.actions_taken);
+
+    result
+}
+
+fn build_html(problem: &Problem, cache: Option<&RecurseCache>, indices: &[u64], parent_state: Option<&State>, state: &State, children: &[State]) -> String {
     assert_eq!(indices.is_empty(), parent_state.is_none());
 
     let mut svg = Vec::new();
     state.write_svg_to(problem, &mut svg).unwrap();
     let svg = String::from_utf8(svg).unwrap();
 
+    let mut str_frontier = String::new();
+    if let Some(cache) = cache {
+        let f = &mut str_frontier;
+        writeln!(f, "Cache:").unwrap();
+        writeln!(f, "  Frontier:").unwrap();
+        if let Some(entry) = cache.get(&state.achievement(problem)) {
+            for (&c, _) in entry.frontier.iter_arbitrary() {
+                writeln!(f, "    {:?} -> {:?}", c, c + state.current_cost()).unwrap();
+            }
+            writeln!(f, "  Example actions:").unwrap();
+            // for &a in &entry.example_state.actions_taken {
+            //     writeln!(f, "    {:?}", a).unwrap();
+            // }
+            let indices = indices_for_target(problem, &entry.example_state);
+            writeln!(f, "    {}", indices.iter().map(|x| x.to_string()).join("/")).unwrap();
+        } else {
+            writeln!(f, "  none").unwrap();
+        }
+        writeln!(f).unwrap();
+    };
+
     let str_summary = state.summary_string(problem);
-    let html_summary = format!(r#"<div id="text" style="white-space: pre; font-family: monospace">{str_summary}</div>"#);
+    let html_summary = format!(r#"<div id="text" style="white-space: pre; font-family: monospace">{str_frontier}{str_summary}</div>"#);
 
     let state_actions_len = state.actions_taken.len();
 
@@ -124,14 +174,15 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
     let f = &mut html_children;
 
     writeln!(f, "<table class=\"table\">").unwrap();
-    writeln!(f, "<tr><th>Link</th>{action_cols}<th>Time</th></tr>").unwrap();
+    writeln!(f, "<tr><th>Link</th>{action_cols}<th>Time</th><th>Energy</th></tr>").unwrap();
     if let Some(parent_state) = parent_state {
-        let delta = (parent_state.curr_time - state.curr_time).0;
+        let delta_time = (parent_state.curr_time - state.curr_time).0;
+        let delta_energy = (parent_state.curr_energy - state.curr_energy).0;
         let dummy_cols = "<td></td>".repeat(possible_actions.len());
-        writeln!(f, "<tr><td><a href=\"../\">back</a></td>{dummy_cols}<td>{delta}</td></tr>").unwrap();
+        writeln!(f, "<tr><td><a href=\"../\">back</a></td>{dummy_cols}<td>{delta_time}</td><td>{delta_energy}</td></tr>").unwrap();
     }
-    writeln!(f, "<tr><td>Filter value</td>{filter_cols}<td></td></tr>").unwrap();
-    writeln!(f, "<tr><td>Filter enable</td>{enable_cols}<td></td></tr>").unwrap();
+    writeln!(f, "<tr><td>Filter value</td>{filter_cols}<td></td><td></td></tr>").unwrap();
+    writeln!(f, "<tr><td>Filter enable</td>{enable_cols}<td></td><td></td></tr>").unwrap();
 
     // TODO separate rendering for mandatory actions (eg. dead value drops)
     //   maybe extend to all actions that don't have alternatives?
@@ -155,12 +206,9 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
         }).join("");
         assert_eq!(hits, child_actions.len() - 1);
 
-        let delta = match child.actions_taken.last().unwrap().inner {
-            Action::Wait(delta) => delta.0,
-            _ => unreachable!(),
-        };
-
-        writeln!(f, "<tr id=\"row_{child_index}\"><td><a href=\"./{child_index}/\">{child_index}</a></td>{checked_cols}<td>{delta}</td></tr>").unwrap();
+        let delta_time = (child.curr_time - state.curr_time).0;
+        let delta_energy = (child.curr_energy - state.curr_energy).0;
+        writeln!(f, "<tr id=\"row_{child_index}\"><td><a href=\"./{child_index}/\">{child_index}</a></td>{checked_cols}<td>{delta_time}</td><td>{delta_energy}</td></tr>").unwrap();
     }
     writeln!(f, "</table>").unwrap();
 
@@ -199,7 +247,7 @@ fn build_html(problem: &Problem, indices: &[u64], parent_state: Option<&State>, 
                                 break;
                             }}
                         }}
-                
+
                         const elem_row = document.getElementById(`row_${{row}}`);
                         if (match) {{
                             elem_row.style.display = "table-row";

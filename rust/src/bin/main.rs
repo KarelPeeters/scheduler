@@ -10,6 +10,7 @@ use rust::core::linear_frontier::LinearFrontier;
 use rust::core::problem::{CostTarget, Problem};
 use rust::core::solve::{CommonReporter, SolveMethod};
 use rust::core::solve_queue::OrdState;
+use rust::core::solve_recurse::RecurseCache;
 use rust::core::state::{Cost, State};
 use rust::core::wrapper::Time;
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
@@ -37,13 +38,13 @@ fn main() {
         },
         &[("basic", 4000, 1000)],
     );
-    // let target = CostTarget::Full;
-    // let method = SolveMethod::Recurse;
-    // let partial_plot_frequency = 1;
-    // 
-    // main_solver(&problem, target, method, partial_plot_frequency);
 
-    main_server(problem);
+    let target = CostTarget::Full;
+    let method = SolveMethod::Recurse;
+    let partial_plot_frequency = 1;
+    let cache = main_solver(&problem, target, method, partial_plot_frequency);
+
+    main_server(problem, cache);
 }
 
 fn main_milp(problem: &Problem) {
@@ -89,7 +90,7 @@ fn main_milp(problem: &Problem) {
     println!("Max time: {}", max_time.0);
 }
 
-fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, partial_plot_frequency: u64) {
+fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, partial_plot_frequency: u64) -> Option<RecurseCache> {
     let _ = std::fs::remove_dir_all("ignored/hardware/");
     let _ = std::fs::remove_dir_all("ignored/schedules/");
     std::fs::create_dir_all("ignored/hardware/").unwrap();
@@ -113,7 +114,7 @@ fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, parti
     let start = Instant::now();
 
     println!("Starting solver");
-    let frontier = method.solve(problem, target, &mut reporter);
+    let (frontier, cache) = method.solve(problem, target, &mut reporter);
     
     let solver_elapsed = start.elapsed();
 
@@ -123,6 +124,8 @@ fn main_solver(problem: &Problem, target: CostTarget, method: SolveMethod, parti
     }
 
     println!("Solver took {:?}s", solver_elapsed.as_secs_f64());
+
+    cache
 }
 
 struct CustomReporter {

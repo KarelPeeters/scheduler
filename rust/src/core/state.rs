@@ -582,6 +582,9 @@ impl State {
         for (mem, info) in &self.state_memory_node {
             for (&value, &availability) in info {
                 match availability {
+                    // TODO track read_lock_count and remaining_unstarted_uses in achievement?
+                    //    to be fully accurate, we need to track the latest unlock time
+                    //    is value_remaining_unstarted_uses derivable from the values that exist?
                     ValueState::AvailableNow { read_lock_count, read_count: _, since: _ } => {
                         if read_lock_count == 0 && self.value_remaining_unstarted_uses[value] == 0 {
                             // TODO do back in time and drop after last usage? mostly to get nicer memory plots

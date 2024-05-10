@@ -1,24 +1,31 @@
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
-use std::fmt::format;
+use std::collections::hash_map::Entry;
+
 use itertools::{Itertools, rev};
+
 use crate::core::expand::expand;
 use crate::core::frontier::Frontier;
 use crate::core::problem::{CostTarget, Problem};
 use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
-use unwrap_match::unwrap_match;
 
 pub trait ReporterRecurse {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, schedule: &State);
     fn report_new_state(&mut self, problem: &Problem, state: &State);
 }
 
-type CostFrontier = Frontier<Cost, VecDeque<Action>>;
+pub type CostFrontier = Frontier<Cost, VecDeque<Action>>;
+pub type RecurseCache = HashMap<Vec<i64>, CompletedCacheEntry>;
 
 enum CacheEntry {
     Placeholder,
-    Completed(CostFrontier),
+    Completed(CompletedCacheEntry),
+}
+
+#[derive(Clone)]
+pub struct CompletedCacheEntry {
+    pub example_state: State,
+    pub frontier: CostFrontier,
 }
 
 pub struct Context<'p, 'r, 'f, R: ReporterRecurse> {
@@ -28,7 +35,7 @@ pub struct Context<'p, 'r, 'f, R: ReporterRecurse> {
     cache: &'f mut HashMap<Vec<i64>, CacheEntry>
 }
 
-pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterRecurse) -> Frontier<Cost, State> {
+pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl ReporterRecurse) -> (Frontier<Cost, State>, RecurseCache) {
     let state = State::new(problem);
 
     let mut cache = HashMap::new();
@@ -69,7 +76,12 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
     //     println!("  {} {:?}", k_str, v.to_sorted_vec());
     // }
 
-    clean
+    let clean_cache = cache.into_iter().map(|(k, v)| (k.to_owned(), match v {
+        CacheEntry::Placeholder => unreachable!(),
+        CacheEntry::Completed(v) => v,
+    })).collect();
+
+    (clean, clean_cache)
 }
 
 // TODO instead of dragging vecs around, just reconstruct based on the cache afterwards?
@@ -87,13 +99,14 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
     }
 
     let achievement = state.achievement(problem);
+    let state_clone = state.clone();
     match ctx.cache.entry(achievement.clone()) {
         Entry::Occupied(entry) => {
             return match entry.get() {
                 // hit loop, which is useless
                 CacheEntry::Placeholder => CostFrontier::empty(),
                 // cache hit
-                CacheEntry::Completed(frontier) => frontier.clone(),
+                CacheEntry::Completed(entry) => entry.frontier.clone(),
             }
         }
         Entry::Vacant(entry) => {
@@ -135,7 +148,11 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
         }
     });
 
-    let prev = ctx.cache.insert(achievement, CacheEntry::Completed(frontier.clone()));
+    let entry = CacheEntry::Completed(CompletedCacheEntry {
+        example_state: state_clone,
+        frontier: frontier.clone(),
+    });
+    let prev = ctx.cache.insert(achievement, entry);
     assert!(matches!(prev, Some(CacheEntry::Placeholder)));
 
     frontier

@@ -4,7 +4,7 @@ use crate::core::frontier::Frontier;
 use crate::core::linear_frontier::LinearFrontier;
 use crate::core::problem::{CostTarget, Problem};
 use crate::core::solve_queue::{OrdState, ReporterQueue, solve_queue};
-use crate::core::solve_recurse::{ReporterRecurse, solve_recurse};
+use crate::core::solve_recurse::{RecurseCache, ReporterRecurse, solve_recurse};
 use crate::core::state::{Cost, State};
 
 #[derive(Debug, Copy, Clone)]
@@ -14,10 +14,13 @@ pub enum SolveMethod {
 }
 
 impl SolveMethod {
-    pub fn solve(self, problem: &Problem, target: CostTarget, reporter: &mut impl CommonReporter) -> Frontier<Cost, State> {
+    pub fn solve(self, problem: &Problem, target: CostTarget, reporter: &mut impl CommonReporter) -> (Frontier<Cost, State>, Option<RecurseCache>) {
         match self {
-            SolveMethod::Queue => solve_queue(problem, target, reporter),
-            SolveMethod::Recurse => solve_recurse(problem, target, reporter),
+            SolveMethod::Queue => (solve_queue(problem, target, reporter), None),
+            SolveMethod::Recurse => {
+                let (frontier, cache) = solve_recurse(problem, target, reporter);
+                (frontier, Some(cache))
+            },
         }
     }
 }
