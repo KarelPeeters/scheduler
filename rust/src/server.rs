@@ -34,11 +34,12 @@ fn handle_request(problem: &Problem, cache: Option<&RecurseCache>, request: &Req
                 Ok(indices) => indices,
                 Err(_) => return Response::empty_404(),
             };
-            let (parent, state, children) = match pick_state(problem, &indices) {
+            let (parent, state) = match pick_state(problem, &indices) {
                 Ok(state) => state,
                 Err(_) => return Response::empty_404(),
             };
 
+            let children = gen_children(problem, &state);
             Response::html(build_html(problem, cache, &indices, parent.as_ref(), &state, &children))
         }
         _ => Response::empty_404(),
@@ -49,7 +50,7 @@ fn handle_request(problem: &Problem, cache: Option<&RecurseCache>, request: &Req
     r
 }
 
-fn pick_state(problem: &Problem, indices: &[u64]) -> Result<(Option<State>, State, Vec<State>), ()> {
+fn pick_state(problem: &Problem, indices: &[u64]) -> Result<(Option<State>, State), ()> {
     let mut prev = None;
     let mut curr = State::new(problem);
 
@@ -69,30 +70,35 @@ fn pick_state(problem: &Problem, indices: &[u64]) -> Result<(Option<State>, Stat
         curr = picked.ok_or(())?;
     }
 
+    Ok((prev, curr))
+}
+
+fn gen_children(problem: &Problem, state: &State) -> Vec<State> {
     let mut children = vec![];
-    expand(problem, curr.clone(), &mut |c| {
+    expand(problem, state.clone(), &mut |c| {
         // TODO remove check once expand stops generating duplicates
         if !children.contains(&c) {
             children.push(c)
         }
     });
-
-    Ok((prev, curr, children))
+    children
 }
 
 fn indices_for_target(problem: &Problem, target: &State) -> Vec<u64> {
     let mut result = vec![];
+    let mut curr: State = State::new(problem);
 
     loop {
-        let (_, curr, children) = pick_state(problem, &result).unwrap();
         if curr.actions_taken.len() == target.actions_taken.len() {
             break;
         }
 
+        let children = gen_children(problem, &curr);
         let mut found = false;
-        for (child_index, child) in enumerate(&children) {
+        for (child_index, child) in enumerate(children.into_iter()) {
             if target.actions_taken.get(..child.actions_taken.len()) == Some(&child.actions_taken[..]) {
                 result.push(child_index as u64);
+                curr = child;
                 found = true;
                 break;
             }
@@ -101,7 +107,6 @@ fn indices_for_target(problem: &Problem, target: &State) -> Vec<u64> {
         assert!(found);
     }
 
-    // TODO assert achievement match
     assert_eq!(&pick_state(problem, &result).unwrap().1.actions_taken, &target.actions_taken);
 
     result
@@ -123,12 +128,12 @@ fn build_html(problem: &Problem, cache: Option<&RecurseCache>, indices: &[u64], 
             for (&c, _) in entry.frontier.iter_arbitrary() {
                 writeln!(f, "    {:?} -> {:?}", c, c + state.current_cost()).unwrap();
             }
-            writeln!(f, "  Example actions:").unwrap();
+            // writeln!(f, "  Example actions:").unwrap();
             // for &a in &entry.example_state.actions_taken {
             //     writeln!(f, "    {:?}", a).unwrap();
             // }
-            let indices = indices_for_target(problem, &entry.example_state);
-            writeln!(f, "    {}", indices.iter().map(|x| x.to_string()).join("/")).unwrap();
+            // let indices = indices_for_target(problem, &entry.example_state);
+            // writeln!(f, "    {}", indices.iter().map(|x| x.to_string()).join("/")).unwrap();
         } else {
             writeln!(f, "  none").unwrap();
         }

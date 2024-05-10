@@ -41,7 +41,7 @@ fn main() {
 
     let target = CostTarget::Full;
     let method = SolveMethod::Recurse;
-    let partial_plot_frequency = 1;
+    let partial_plot_frequency = 1000;
     let cache = main_solver(&problem, target, method, partial_plot_frequency);
 
     main_server(problem, cache);

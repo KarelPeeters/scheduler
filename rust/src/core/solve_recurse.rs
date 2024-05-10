@@ -8,6 +8,7 @@ use crate::core::frontier::Frontier;
 use crate::core::problem::{CostTarget, Problem};
 use crate::core::schedule::Action;
 use crate::core::state::{Cost, State};
+use crate::util::mini::min_option;
 
 pub trait ReporterRecurse {
     fn report_new_schedule(&mut self, problem: &Problem, frontier_done: &Frontier<Cost, State>, schedule: &State);
@@ -17,9 +18,13 @@ pub trait ReporterRecurse {
 pub type CostFrontier = Frontier<Cost, VecDeque<Action>>;
 pub type RecurseCache = HashMap<Vec<i64>, CompletedCacheEntry>;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct LoopDepth(u32);
+
+#[derive(Clone)]
 enum CacheEntry {
-    Placeholder,
-    Completed(CompletedCacheEntry),
+    Placeholder(LoopDepth),
+    Completed(Option<LoopDepth>, CompletedCacheEntry),
 }
 
 #[derive(Clone)]
@@ -47,7 +52,7 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
         cache: &mut cache,
     };
 
-    let result = recurse(&mut ctx, state);
+    let (_, result) = recurse(&mut ctx, state, 0);
 
     // TODO change state representation to be much more minimal and orthogonal to action list
     let mut clean = Frontier::empty();
@@ -77,16 +82,17 @@ pub fn solve_recurse(problem: &Problem, target: CostTarget, reporter: &mut impl 
     // }
 
     let clean_cache = cache.into_iter().map(|(k, v)| (k.to_owned(), match v {
-        CacheEntry::Placeholder => unreachable!(),
-        CacheEntry::Completed(v) => v,
+        CacheEntry::Placeholder { .. } => unreachable!(),
+        CacheEntry::Completed(_, v) => v,
     })).collect();
 
     (clean, clean_cache)
 }
 
-// TODO instead of dragging vecs around, just reconstruct based on the cache afterwards?
 #[inline(never)]
-fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFrontier {
+fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State, depth: u32) -> (Option<LoopDepth>, CostFrontier) {
+    // println!("recurse, depth={}", depth);
+
     let problem = ctx.problem;
     state.assert_valid(problem);
 
@@ -95,23 +101,34 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
     //   similar to the idea to improve the pruning in the other place?
     if state.is_done(problem) {
         assert_eq!(state.curr_time, state.minimum_time);
-        return CostFrontier::single(Cost::default(), VecDeque::new());
+        return (None, CostFrontier::single(Cost::default(), VecDeque::new()));
     }
 
     let achievement = state.achievement(problem);
     let state_clone = state.clone();
     match ctx.cache.entry(achievement.clone()) {
         Entry::Occupied(entry) => {
-            return match entry.get() {
+            match *entry.get() {
                 // hit loop, which is useless
-                CacheEntry::Placeholder => CostFrontier::empty(),
+                CacheEntry::Placeholder(depth) => {
+                    return (Some(depth), CostFrontier::empty());
+                }
                 // cache hit
-                CacheEntry::Completed(entry) => entry.frontier.clone(),
+                CacheEntry::Completed(cache_depth, ref entry) => {
+                    let accept = match cache_depth {
+                        None => true,
+                        Some(LoopDepth(cache_depth)) => cache_depth >= depth,
+                    };
+
+                    if accept {
+                        return (None, entry.frontier.clone());
+                    }
+                },
             }
         }
         Entry::Vacant(entry) => {
             // first time seeing this state, mark for loop detection
-            entry.insert(CacheEntry::Placeholder);
+            entry.insert(CacheEntry::Placeholder(LoopDepth(depth)));
         }
     }
 
@@ -130,6 +147,8 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
     ctx.reporter.report_new_state(problem, &state);
 
     let mut frontier = CostFrontier::empty();
+    let mut min_loop_depth = None;
+
     let curr_cost = state.current_cost();
     let curr_actions_len = state.actions_taken.len();
 
@@ -138,7 +157,8 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
         let delta_cost = next_state.current_cost() - curr_cost;
         let delta_actions = next_state.actions_taken[curr_actions_len..].to_vec();
 
-        let next_frontier = recurse(ctx, next_state);
+        let (next_min_loop_depth, next_frontier) = recurse(ctx, next_state, depth+1);
+        min_loop_depth = min_option(min_loop_depth, next_min_loop_depth);
 
         for (entry_cost, mut entry_actions) in next_frontier.into_iter_arbitrary() {
             for &a in rev(&delta_actions) {
@@ -148,14 +168,24 @@ fn recurse<R: ReporterRecurse>(ctx: &mut Context<R>, state: State) -> CostFronti
         }
     });
 
-    let entry = CacheEntry::Completed(CompletedCacheEntry {
-        example_state: state_clone,
-        frontier: frontier.clone(),
-    });
-    let prev = ctx.cache.insert(achievement, entry);
-    assert!(matches!(prev, Some(CacheEntry::Placeholder)));
+    println!("depth={depth}, min_loop_depth={min_loop_depth:?}");
 
-    frontier
+    // TODO LT or LEQ?
+    let insert_in_cache = min_loop_depth.map_or(true, |min_loop_depth| depth < min_loop_depth.0);
+    println!("insert_in_cache={}", insert_in_cache);
+
+    // let cache_prev = if insert_in_cache {
+        let entry = CacheEntry::Completed(min_loop_depth, CompletedCacheEntry {
+            example_state: state_clone,
+            frontier: frontier.clone(),
+        });
+        let cache_prev = ctx.cache.insert(achievement, entry);
+    // } else {
+    //     ctx.cache.remove(&achievement)
+    // };
+    assert!(matches!(cache_prev, Some(CacheEntry::Placeholder(LoopDepth(_)))));
+
+    (min_loop_depth, frontier)
 }
 
 // TODO pick a better place for this
