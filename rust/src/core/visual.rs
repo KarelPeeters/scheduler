@@ -24,7 +24,7 @@ impl State {
         let padding_right = 50.0;
         let padding_ver = 50.0;
         let tick_size = 10.0;
-        let time_div = 40.0;
+        let time_div = 20.0;
 
         let figure_height = row_height * row_count as f64 + 2.0 * padding_ver;
         let figure_width = time_max / time_div + padding_left + padding_right;
@@ -136,7 +136,7 @@ impl State {
                     let node_info = &graph.nodes[alloc_info.node];
 
                     let row = alloc_info.group.to_index();
-                    let text = format!("#{} {} {}", alloc.to_index(), node_info.id, alloc_info.id);
+                    let text = format!("A{} {} {}", alloc.to_index(), node_info.id, alloc_info.id);
                     rect(&mut f, row, time.start.0 as f64, time.end.0 as f64, "green", &text)?;
                 }
                 Action::Channel(action) => {
@@ -144,7 +144,7 @@ impl State {
                     let node_info = &graph.nodes[action.value];
 
                     let row = channel_info.group.to_index();
-                    let text = format!("#({}, {}) {}", action.channel.to_index(), action.value.to_index(), node_info.id);
+                    let text = format!("C{}V{} {}", action.channel.to_index(), action.value.to_index(), node_info.id);
                     rect(&mut f, row, time.start.0 as f64, time.end.0 as f64, "darkorange", &text)?;
                 }
             }
