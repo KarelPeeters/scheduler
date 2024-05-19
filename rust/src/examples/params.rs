@@ -35,6 +35,11 @@ pub struct TestHardwareParams {
 }
 
 pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardwareParams, allocs_time_energy: &[(&str, i64, i64)]) -> Problem {
+    let graph = test_graph(graph_params);
+    test_problem_custom_graph(graph, hardware_params, allocs_time_energy)
+}
+
+pub fn test_problem_custom_graph(graph: Graph, hardware_params: TestHardwareParams, allocs_time_energy: &[(&str, i64, i64)]) -> Problem {
     // hardware
     let mut hardware = Hardware::new("hardware");
 
@@ -67,74 +72,6 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         hardware.create_channel(format!("{channel_id}_bck"), channel_group, mem_curr, mem_prev, channel_cost);
     }
 
-    // graph
-    assert!(graph_params.branches > 0 || graph_params.depth == 0);
-    
-    let mut graph = Graph::new("graph");
-    let node_input = graph.add_node(NodeInfo {
-        id: "node-input".to_string(),
-        size_bits: graph_params.node_size,
-        inputs: vec![],
-        start_after: vec![],
-    });
-    graph.add_input(node_input);
-    let mut prev = vec![node_input];
-    for i_depth in 0..graph_params.depth {
-        let mut shared_weight = None;
-        
-        let mut next = vec![];
-        
-        for i_branch in 0..graph_params.branches {
-            let mut inputs = if i_depth == 0 {
-                prev.clone()
-            } else {
-                graph_params.cross.pick_inputs(i_depth, i_branch, &prev)
-            };
-
-            if let Some(graph_weight_size) = graph_params.weight_size {
-                let weight = match shared_weight {
-                    None => {
-                        // TODO add "constant" utility constructor
-                        let weight = graph.add_node(NodeInfo {
-                            id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-                            size_bits: graph_weight_size,
-                            inputs: vec![],
-                            start_after: vec![],
-                        });
-                        graph.add_input(weight);
-                        weight
-                    }
-                    Some(shared_weight) => shared_weight,
-                };
-
-                if graph_params.share_weights {
-                    shared_weight = Some(weight);
-                }
-                
-                inputs.push(weight);
-            }
-
-            let start_after = if graph_params.constrain_order { next.clone() } else { vec![] };
-
-            let node = graph.add_node(NodeInfo {
-                id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
-                size_bits: graph_params.node_size,
-                inputs,
-                start_after,
-            });
-            next.push(node);
-        }
-
-        prev = next;
-    }
-    let node_output = graph.add_node(NodeInfo {
-        id: "node-output".to_string(),
-        size_bits: graph_params.node_size,
-        inputs: prev,
-        start_after: vec![],
-    });
-    graph.add_output(node_output);
-
     // allocations
     let mut allocations = TypedVec::new();
     for (i, &core_group) in enumerate(&core_groups) {
@@ -143,7 +80,7 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
             if graph.inputs.contains(&node) {
                 continue;
             }
-            
+
             for &(ref name, time, energy) in allocs_time_energy {
                 allocations.push(AllocationInfo {
                     id: name.to_string(),
@@ -170,6 +107,77 @@ pub fn test_problem(graph_params: TestGraphParams, hardware_params: TestHardware
         input_placements,
         output_placements,
     }
+}
+
+pub fn test_graph(graph_params: TestGraphParams) -> Graph {
+    assert!(graph_params.branches > 0 || graph_params.depth == 0);
+
+    let mut graph = Graph::new("graph");
+    let node_input = graph.add_node(NodeInfo {
+        id: "node-input".to_string(),
+        size_bits: graph_params.node_size,
+        inputs: vec![],
+        start_after: vec![],
+    });
+    graph.add_input(node_input);
+    let mut prev = vec![node_input];
+    for i_depth in 0..graph_params.depth {
+        let mut shared_weight = None;
+
+        let mut next = vec![];
+
+        for i_branch in 0..graph_params.branches {
+            let mut inputs = if i_depth == 0 {
+                prev.clone()
+            } else {
+                graph_params.cross.pick_inputs(i_depth, i_branch, &prev)
+            };
+
+            if let Some(graph_weight_size) = graph_params.weight_size {
+                let weight = match shared_weight {
+                    None => {
+                        // TODO add "constant" utility constructor
+                        let weight = graph.add_node(NodeInfo {
+                            id: format!("weight-{}{}", i_depth, (b'a' + i_branch as u8) as char),
+                            size_bits: graph_weight_size,
+                            inputs: vec![],
+                            start_after: vec![],
+                        });
+                        graph.add_input(weight);
+                        weight
+                    }
+                    Some(shared_weight) => shared_weight,
+                };
+
+                if graph_params.share_weights {
+                    shared_weight = Some(weight);
+                }
+
+                inputs.push(weight);
+            }
+
+            let start_after = if graph_params.constrain_order { next.clone() } else { vec![] };
+
+            let node = graph.add_node(NodeInfo {
+                id: format!("node-{}{}", i_depth, (b'a' + i_branch as u8) as char),
+                size_bits: graph_params.node_size,
+                inputs,
+                start_after,
+            });
+            next.push(node);
+        }
+
+        prev = next;
+    }
+    let node_output = graph.add_node(NodeInfo {
+        id: "node-output".to_string(),
+        size_bits: graph_params.node_size,
+        inputs: prev,
+        start_after: vec![],
+    });
+    graph.add_output(node_output);
+
+    graph
 }
 
 impl CrossBranches {
