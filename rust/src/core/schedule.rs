@@ -2,13 +2,13 @@ use std::fmt::{Debug, Formatter};
 use crate::core::problem::{Allocation, Channel, Memory, Node, Problem};
 use crate::core::wrapper::{Energy, Time};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Timed<T> {
     pub time: TimeRange,
     pub inner: T,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Action {
     Wait(Time),
     Core(Allocation),
@@ -16,20 +16,20 @@ pub enum Action {
     Drop(ActionDrop)
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ActionChannel {
     pub channel: Channel,
     pub value: Node,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ActionDrop {
     pub value: Node,
     pub mem: Memory,
 }
 
 // TODO move next to Time
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct TimeRange {
     pub start: Time,
     /// exclusive

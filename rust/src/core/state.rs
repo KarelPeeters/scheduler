@@ -10,7 +10,7 @@ use crate::core::schedule::{Action, ActionChannel, ActionDrop, Timed, TimeRange}
 use crate::core::wrapper::{Energy, Time, TypedVec};
 use crate::dom_early_check;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct State {
     // minimal state
     pub actions_taken: Vec<Timed<Action>>,
@@ -43,7 +43,7 @@ pub struct SkippedDropInfo {
 
 // TODO rename
 // TODO store only minimal information here
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum GroupClaim {
     Core(Allocation),
     Channel(ActionChannel),
@@ -56,7 +56,7 @@ pub struct Cost {
 }
 
 // TODO add dead and unavailable here?
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ValueState {
     AvailableNow {
         // the number of currently active readers

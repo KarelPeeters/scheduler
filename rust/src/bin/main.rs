@@ -14,6 +14,7 @@ use rust::core::state::{Cost, State};
 use rust::core::wrapper::Time;
 use rust::examples::{DEFAULT_CHANNEL_COST_EXT, DEFAULT_CHANNEL_COST_INT};
 use rust::examples::params::{CrossBranches, test_problem, TestGraphParams, TestHardwareParams};
+use rust::server::main_server;
 
 fn main() {
     let problem = test_problem(
@@ -41,6 +42,7 @@ fn main() {
     let partial_plot_frequency = 1000;
     
     main_solver(&problem, target, method, partial_plot_frequency);
+    main_server(problem);
 }
 
 fn main_milp(problem: &Problem) {
