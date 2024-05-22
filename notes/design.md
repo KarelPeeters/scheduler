@@ -6,6 +6,15 @@
 
 # Core features
 
+* Add partial starts:
+  * NN layer that can start when only part of the previous output is available.
+  * This should be enough to get streaming working properly!
+  * Concretely:
+    * For each input in an allocation, add a minimal fraction and a rate (assume simple and linear at first)
+    * For each allocation output, define a similar stream curve.
+    * For channel operations, allow streaming at lower bandwidth.
+  * Hopefully this is enough that we can avoid splitting layers up, causing combinatorial explosions.
+
 * Improve pareto dominance check:
     * include core active times?
     * include value availability
